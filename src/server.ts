@@ -13,6 +13,7 @@ import { findAutoLinks } from "./utils/autoLink.js";
 import { cosineSimilarity, embedText } from "./utils/embeddings.js";
 import { reconstructContext } from "./utils/context.js";
 import { scoreRelationship } from "./utils/relationships.js";
+import { buildGraphExport } from "./utils/graph.js";
 
 export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
 
@@ -274,6 +275,15 @@ export function createPersonalKgServer(): McpServer {
     async ({ topic }) => {
       const summary = reconstructContext(storage.listAllNodes(), topic);
       return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_graph_export",
+    {},
+    async () => {
+      const g = buildGraphExport(storage);
+      return { content: [{ type: "text", text: JSON.stringify(g, null, 2) }] };
     }
   );
 
