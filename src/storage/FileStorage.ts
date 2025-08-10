@@ -66,6 +66,12 @@ export class FileStorage {
     return nodes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
   }
 
+  listAllNodes(): KnowledgeNode[] {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const entries = fs.readdirSync(this.nodesDir).filter((f) => f.endsWith(".json"));
+    return entries.map((f) => JSON.parse(fs.readFileSync(join(this.nodesDir, f), "utf8")) as KnowledgeNode);
+  }
+
   searchNodes(params: {
     query?: string;
     tags?: string[];

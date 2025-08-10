@@ -10,6 +10,7 @@ import { getHealth } from "./handlers/health.js";
 import { FileStorage } from "./storage/FileStorage.js";
 import type { CreateNodeInput } from "./types/domain.js";
 import { findAutoLinks } from "./utils/autoLink.js";
+import { cosineSimilarity, embedText } from "./utils/embeddings.js";
 
 export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
 
@@ -135,6 +136,34 @@ export function createPersonalKgServer(): McpServer {
     async ({ query, tags, type, limit }) => {
       const nodes = storage.searchNodes({ query, tags, type, limit });
       return { content: [{ type: "text", text: JSON.stringify({ total: nodes.length, nodes }, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_semantic_search",
+    { query: z.string(), limit: z.number().int().min(1).max(50).default(10) },
+    async ({ query, limit }) => {
+      const q = embedText(query);
+      const nodes = storage.listAllNodes();
+      const scored = nodes.map((n) => ({ node: n, score: cosineSimilarity(q, embedText(n.content)) }));
+      scored.sort((a, b) => b.score - a.score);
+      const results = scored.slice(0, limit).map((r) => ({ id: r.node.id, score: r.score, snippet: r.node.content.slice(0, 160) }));
+      return { content: [{ type: "text", text: JSON.stringify({ total: results.length, results }, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_find_similar",
+    { nodeId: z.string(), limit: z.number().int().min(1).max(50).default(10) },
+    async ({ nodeId, limit }) => {
+      const base = storage.getNode(nodeId);
+      if (!base) return { content: [{ type: "text", text: JSON.stringify({ results: [] }, null, 2) }] };
+      const v = embedText(base.content);
+      const nodes = storage.listAllNodes().filter((n) => n.id !== nodeId);
+      const scored = nodes.map((n) => ({ node: n, score: cosineSimilarity(v, embedText(n.content)) }));
+      scored.sort((a, b) => b.score - a.score);
+      const results = scored.slice(0, limit).map((r) => ({ id: r.node.id, score: r.score, snippet: r.node.content.slice(0, 160) }));
+      return { content: [{ type: "text", text: JSON.stringify({ total: results.length, results }, null, 2) }] };
     }
   );
 
