@@ -8,9 +8,8 @@
     "dev": "tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "vitest",
-    "test:unit": "vitest run --reporter=verbose",
-    "test:watch": "vitest"
+    "test": "vitest run --config vitest.config.ts",
+    "test:unit": "vitest run --config vitest.config.ts --reporter=verbose"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.16.0",
