@@ -1,7 +1,9 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, cpSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CreateNodeInput, KnowledgeEdge, KnowledgeNode, ExportPayload } from "../types/domain.js";
+import { ExportPayloadSchema, KnowledgeEdgeSchema, KnowledgeNodeSchema } from "../types/schemas.js";
+import { LruCache } from "./Cache.js";
 
 export interface FileStorageConfig {
   baseDir: string;
@@ -9,6 +11,7 @@ export interface FileStorageConfig {
 
 export class FileStorage {
   private readonly baseDir: string;
+  private readonly nodeCache = new LruCache<string, KnowledgeNode>(256);
 
   constructor(config: FileStorageConfig) {
     this.baseDir = config.baseDir;
@@ -39,13 +42,18 @@ export class FileStorage {
     };
     const file = join(this.nodesDir, `${id}.json`);
     writeFileSync(file, JSON.stringify(node, null, 2), "utf8");
+    this.nodeCache.set(id, node);
     return node;
   }
 
   getNode(id: string): KnowledgeNode | undefined {
+    const cached = this.nodeCache.get(id);
+    if (cached) return cached;
     const file = join(this.nodesDir, `${id}.json`);
     if (!existsSync(file)) return undefined;
-    return JSON.parse(readFileSync(file, "utf8")) as KnowledgeNode;
+    const node = JSON.parse(readFileSync(file, "utf8")) as KnowledgeNode;
+    this.nodeCache.set(id, node);
+    return node;
   }
 
   listRecent(limit = 20): KnowledgeNode[] {
@@ -100,6 +108,7 @@ export class FileStorage {
     const file = join(this.nodesDir, `${id}.json`);
     if (!existsSync(file)) return false;
     rmSync(file);
+    this.nodeCache.delete(id);
     return true;
   }
 
@@ -122,21 +131,63 @@ export class FileStorage {
     const fs = require("node:fs") as typeof import("node:fs");
     const nodeFiles = fs.readdirSync(this.nodesDir).filter((f: string) => f.endsWith(".json"));
     const edgeFiles = fs.readdirSync(this.edgesDir).filter((f: string) => f.endsWith(".json"));
-    const nodes: KnowledgeNode[] = nodeFiles.map((f: string) => JSON.parse(fs.readFileSync(join(this.nodesDir, f), "utf8")));
-    const edges: KnowledgeEdge[] = edgeFiles.map((f: string) => JSON.parse(fs.readFileSync(join(this.edgesDir, f), "utf8")));
+    const nodes: KnowledgeNode[] = nodeFiles.map((f: string) => KnowledgeNodeSchema.parse(JSON.parse(fs.readFileSync(join(this.nodesDir, f), "utf8"))));
+    const edges: KnowledgeEdge[] = edgeFiles.map((f: string) => KnowledgeEdgeSchema.parse(JSON.parse(fs.readFileSync(join(this.edgesDir, f), "utf8"))));
     return { nodes, edges };
   }
 
   importAll(payload: ExportPayload): { nodes: number; edges: number } {
-    for (const node of payload.nodes) {
+    const parsed = ExportPayloadSchema.parse(payload);
+    for (const node of parsed.nodes) {
       const file = join(this.nodesDir, `${node.id}.json`);
       writeFileSync(file, JSON.stringify(node, null, 2), "utf8");
     }
-    for (const edge of payload.edges) {
+    for (const edge of parsed.edges) {
       const file = join(this.edgesDir, `${edge.id}.json`);
       writeFileSync(file, JSON.stringify(edge, null, 2), "utf8");
     }
-    return { nodes: payload.nodes.length, edges: payload.edges.length };
+    return { nodes: parsed.nodes.length, edges: parsed.edges.length };
+  }
+
+  backup(retentionDays = 30): { backupDir: string } {
+    const date = new Date().toISOString().slice(0, 10);
+    const backupDir = join(this.baseDir, "backups", date);
+    mkdirSync(backupDir, { recursive: true });
+    cpSync(this.nodesDir, join(backupDir, "nodes"), { recursive: true });
+    cpSync(this.edgesDir, join(backupDir, "edges"), { recursive: true });
+    // retention: delete older than N days
+    const fs = require("node:fs") as typeof import("node:fs");
+    const backupsParent = join(this.baseDir, "backups");
+    for (const entry of fs.readdirSync(backupsParent)) {
+      const path = join(backupsParent, entry);
+      const stat = fs.statSync(path);
+      const ageDays = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24);
+      if (ageDays > retentionDays) fs.rmSync(path, { recursive: true, force: true });
+    }
+    return { backupDir };
+  }
+
+  validate(): { ok: boolean; invalidNodes: number; invalidEdges: number } {
+    const fs = require("node:fs") as typeof import("node:fs");
+    let invalidNodes = 0;
+    let invalidEdges = 0;
+    for (const f of fs.readdirSync(this.nodesDir)) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        KnowledgeNodeSchema.parse(JSON.parse(fs.readFileSync(join(this.nodesDir, f), "utf8")));
+      } catch {
+        invalidNodes++;
+      }
+    }
+    for (const f of fs.readdirSync(this.edgesDir)) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        KnowledgeEdgeSchema.parse(JSON.parse(fs.readFileSync(join(this.edgesDir, f), "utf8")));
+      } catch {
+        invalidEdges++;
+      }
+    }
+    return { ok: invalidNodes === 0 && invalidEdges === 0, invalidNodes, invalidEdges };
   }
 }
 

@@ -18,4 +18,8 @@ Minimal scaffold for the Personal Knowledge Graph MCP server. Implements a healt
 - `kg_delete_node`: { id, deleteEdges? }
 - `kg_export` / `kg_import`: backup/restore
 
+Planned:
+- `kg_backup`: create dated backup with retention
+- `kg_validate`: validate on-disk data and report issues
+
 
