@@ -109,9 +109,9 @@ export class FileStorage {
       .slice(0, limit);
   }
 
-  createEdge(fromNodeId: string, toNodeId: string, relation: KnowledgeEdge["relation"]): KnowledgeEdge {
+  createEdge(fromNodeId: string, toNodeId: string, relation: KnowledgeEdge["relation"], extra?: Partial<KnowledgeEdge>): KnowledgeEdge {
     const id = randomUUID();
-    const edge: KnowledgeEdge = { id, fromNodeId, toNodeId, relation, createdAt: new Date().toISOString() };
+    const edge: KnowledgeEdge = { id, fromNodeId, toNodeId, relation, createdAt: new Date().toISOString(), ...extra };
     const file = join(this.edgesDir, `${id}.json`);
     writeFileSync(file, JSON.stringify(edge, null, 2), "utf8");
     return edge;

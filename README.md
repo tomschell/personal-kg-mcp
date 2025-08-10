@@ -24,6 +24,8 @@ Minimal scaffold for the Personal Knowledge Graph MCP server. Implements a healt
  - `kg_validate`: {} → validate on-disk data
  - `kg_repair`: {} → quarantine and remove invalid files
  - `kg_query_time_range`: { start?, end?, query? }
+  - `kg_rebuild_relationships`: { threshold?, limit? } → batch create edges with strength
+  - `kg_prune_weak_relationships`: { threshold? } → remove weak edges
  - `kg_query_context`: { topic } → reconstructs context summary for a topic
 
 ## Env (optional)

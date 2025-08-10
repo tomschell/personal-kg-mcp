@@ -30,6 +30,9 @@ export interface KnowledgeEdge {
   toNodeId: string;
   relation: KnowledgeRelation;
   createdAt: string; // ISO timestamp
+  strength?: number; // 0..1 similarity-based
+  confidence?: number; // optional confidence
+  evidence?: string[];
 }
 
 export interface CreateNodeInput {

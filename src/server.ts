@@ -12,6 +12,7 @@ import type { CreateNodeInput } from "./types/domain.js";
 import { findAutoLinks } from "./utils/autoLink.js";
 import { cosineSimilarity, embedText } from "./utils/embeddings.js";
 import { reconstructContext } from "./utils/context.js";
+import { scoreRelationship } from "./utils/relationships.js";
 
 export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
 
@@ -76,7 +77,11 @@ export function createPersonalKgServer(): McpServer {
       if (args.auto_link) {
         const candidates = storage.searchNodes({ limit: 50 });
         const links = findAutoLinks(candidates, node.content);
-        for (const id of links) storage.createEdge(node.id, id, "relates_to");
+        for (const id of links) {
+          const other = storage.getNode(id);
+          const strength = other ? scoreRelationship(node, other) : undefined;
+          storage.createEdge(node.id, id, "relates_to", { strength, evidence: ["tags/content overlap"] });
+        }
       }
       return { content: [{ type: "text", text: JSON.stringify({ accepted: true, node }, null, 2) }] };
     }
@@ -128,7 +133,10 @@ export function createPersonalKgServer(): McpServer {
     "kg_create_edge",
     { fromNodeId: z.string(), toNodeId: z.string(), relation: z.enum(["references", "relates_to", "derived_from", "blocks", "duplicates"]) },
     async ({ fromNodeId, toNodeId, relation }) => {
-      const edge = storage.createEdge(fromNodeId, toNodeId, relation);
+      const a = storage.getNode(fromNodeId);
+      const b = storage.getNode(toNodeId);
+      const strength = a && b ? scoreRelationship(a, b) : undefined;
+      const edge = storage.createEdge(fromNodeId, toNodeId, relation, { strength });
       return { content: [{ type: "text", text: JSON.stringify({ edge }, null, 2) }] };
     }
   );
@@ -139,6 +147,46 @@ export function createPersonalKgServer(): McpServer {
     async ({ nodeId }) => {
       const edges = storage.listEdges(nodeId);
       return { content: [{ type: "text", text: JSON.stringify({ total: edges.length, edges }, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_rebuild_relationships",
+    { threshold: z.number().min(0).max(1).default(0.35), limit: z.number().int().min(1).max(10000).default(1000) },
+    async ({ threshold, limit }) => {
+      const nodes = storage.listAllNodes().slice(0, limit);
+      let created = 0;
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const s = scoreRelationship(nodes[i], nodes[j]);
+          if (s >= threshold) {
+            storage.createEdge(nodes[i].id, nodes[j].id, "relates_to", { strength: s });
+            created++;
+          }
+        }
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ created }, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_prune_weak_relationships",
+    { threshold: z.number().min(0).max(1).default(0.15) },
+    async ({ threshold }) => {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const edgesDir = (storage as any).edgesDir as string; // internal path
+      let removed = 0;
+      for (const f of fs.readdirSync(edgesDir)) {
+        if (!f.endsWith(".json")) continue;
+        const p = path.join(edgesDir, f);
+        const e = JSON.parse(fs.readFileSync(p, "utf8"));
+        if (typeof e.strength === "number" && e.strength < threshold) {
+          fs.rmSync(p);
+          removed++;
+        }
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ removed }, null, 2) }] };
     }
   );
 
