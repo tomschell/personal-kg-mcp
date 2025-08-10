@@ -15,5 +15,7 @@ Minimal scaffold for the Personal Knowledge Graph MCP server. Implements a healt
 - `kg_create_edge`: { fromNodeId, toNodeId, relation }
 - `kg_list_edges`: { nodeId? }
 - `kg_search`: { query?, tags?, type?, limit? }
+- `kg_delete_node`: { id, deleteEdges? }
+- `kg_export` / `kg_import`: backup/restore
 
 

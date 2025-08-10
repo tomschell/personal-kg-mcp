@@ -33,6 +33,7 @@ export function createPersonalKgServer(): McpServer {
       content: z.string(),
       type: z.enum(KnowledgeNodeType).default("idea"),
       tags: z.array(z.string()).optional(),
+      visibility: z.enum(["private", "team", "public"]).optional(),
       includeGit: z.boolean().default(false)
     },
     async (args) => {
@@ -48,7 +49,7 @@ export function createPersonalKgServer(): McpServer {
           // ignore git errors; leave git undefined
         }
       }
-      const input: CreateNodeInput = { content: args.content, type: args.type, tags: args.tags ?? [], git };
+      const input: CreateNodeInput = { content: args.content, type: args.type, tags: args.tags ?? [], visibility: args.visibility, git };
       const node = storage.createNode(input);
       return { content: [{ type: "text", text: JSON.stringify({ accepted: true, node }, null, 2) }] };
     }
@@ -120,6 +121,16 @@ export function createPersonalKgServer(): McpServer {
       const data = JSON.parse(payload);
       const result = storage.importAll(data);
       return { content: [{ type: "text", text: JSON.stringify({ success: true, ...result }, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_delete_node",
+    { id: z.string(), deleteEdges: z.boolean().default(true) },
+    async ({ id, deleteEdges }) => {
+      const deleted = storage.deleteNode(id);
+      const edgesDeleted = deleteEdges ? storage.deleteEdgesForNode(id) : 0;
+      return { content: [{ type: "text", text: JSON.stringify({ deleted, edgesDeleted }, null, 2) }] };
     }
   );
 

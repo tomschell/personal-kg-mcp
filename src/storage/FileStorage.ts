@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CreateNodeInput, KnowledgeEdge, KnowledgeNode, ExportPayload } from "../types/domain.js";
@@ -94,6 +94,28 @@ export class FileStorage {
     const edges: KnowledgeEdge[] = entries.map((f) => JSON.parse(fs.readFileSync(join(this.edgesDir, f), "utf8")));
     if (!nodeId) return edges;
     return edges.filter((e) => e.fromNodeId === nodeId || e.toNodeId === nodeId);
+  }
+
+  deleteNode(id: string): boolean {
+    const file = join(this.nodesDir, `${id}.json`);
+    if (!existsSync(file)) return false;
+    rmSync(file);
+    return true;
+  }
+
+  deleteEdgesForNode(nodeId: string): number {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const entries = fs.readdirSync(this.edgesDir).filter((f) => f.endsWith(".json"));
+    let deleted = 0;
+    for (const f of entries) {
+      const p = join(this.edgesDir, f);
+      const e = JSON.parse(fs.readFileSync(p, "utf8")) as KnowledgeEdge;
+      if (e.fromNodeId === nodeId || e.toNodeId === nodeId) {
+        fs.rmSync(p);
+        deleted++;
+      }
+    }
+    return deleted;
   }
 
   exportAll(): ExportPayload {
