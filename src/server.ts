@@ -195,6 +195,15 @@ export function createPersonalKgServer(): McpServer {
   );
 
   server.tool(
+    "kg_query_time_range",
+    { start: z.string().optional(), end: z.string().optional(), query: z.string().optional() },
+    async ({ start, end, query }) => {
+      const nodes = storage.listByTimeRange({ start, end, query });
+      return { content: [{ type: "text", text: JSON.stringify({ total: nodes.length, nodes }, null, 2) }] };
+    }
+  );
+
+  server.tool(
     "kg_export",
     {},
     async () => {

@@ -23,6 +23,7 @@ Minimal scaffold for the Personal Knowledge Graph MCP server. Implements a healt
  - `kg_backup`: { retentionDays? } → snapshot nodes/edges with retention cleanup
  - `kg_validate`: {} → validate on-disk data
  - `kg_repair`: {} → quarantine and remove invalid files
+ - `kg_query_time_range`: { start?, end?, query? }
 
 Planned:
 - `kg_backup`: create dated backup with retention

@@ -72,6 +72,20 @@ export class FileStorage {
     return entries.map((f) => JSON.parse(fs.readFileSync(join(this.nodesDir, f), "utf8")) as KnowledgeNode);
   }
 
+  listByTimeRange(params: { start?: string; end?: string; query?: string }): KnowledgeNode[] {
+    const { start, end, query } = params;
+    const startTs = start ? Date.parse(start) : undefined;
+    const endTs = end ? Date.parse(end) : undefined;
+    const q = (query ?? "").toLowerCase();
+    return this.listAllNodes().filter((n) => {
+      const ts = Date.parse(n.createdAt);
+      if (startTs && ts < startTs) return false;
+      if (endTs && ts > endTs) return false;
+      if (q && !n.content.toLowerCase().includes(q) && !n.tags.some((t) => t.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }
+
   searchNodes(params: {
     query?: string;
     tags?: string[];
