@@ -11,6 +11,7 @@ import { FileStorage } from "./storage/FileStorage.js";
 import type { CreateNodeInput } from "./types/domain.js";
 import { findAutoLinks } from "./utils/autoLink.js";
 import { cosineSimilarity, embedText } from "./utils/embeddings.js";
+import { reconstructContext } from "./utils/context.js";
 
 export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
 
@@ -216,6 +217,15 @@ export function createPersonalKgServer(): McpServer {
     async ({ start, end, query }) => {
       const nodes = storage.listByTimeRange({ start, end, query });
       return { content: [{ type: "text", text: JSON.stringify({ total: nodes.length, nodes }, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_query_context",
+    { topic: z.string() },
+    async ({ topic }) => {
+      const summary = reconstructContext(storage.listAllNodes(), topic);
+      return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }] };
     }
   );
 
