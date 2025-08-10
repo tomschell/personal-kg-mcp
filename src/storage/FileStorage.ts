@@ -196,6 +196,42 @@ export class FileStorage {
     }
     return { ok: invalidNodes === 0 && invalidEdges === 0, invalidNodes, invalidEdges };
   }
+
+  repair(): { removedNodes: number; removedEdges: number; quarantinedDir: string } {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const quarantine = join(this.baseDir, "quarantine", Date.now().toString());
+    mkdirSync(quarantine, { recursive: true });
+    let removedNodes = 0;
+    let removedEdges = 0;
+
+    // Nodes
+    for (const f of fs.readdirSync(this.nodesDir)) {
+      if (!f.endsWith(".json")) continue;
+      const p = join(this.nodesDir, f);
+      try {
+        KnowledgeNodeSchema.parse(JSON.parse(fs.readFileSync(p, "utf8")));
+      } catch {
+        fs.cpSync(p, join(quarantine, f));
+        fs.rmSync(p);
+        removedNodes++;
+      }
+    }
+
+    // Edges
+    for (const f of fs.readdirSync(this.edgesDir)) {
+      if (!f.endsWith(".json")) continue;
+      const p = join(this.edgesDir, f);
+      try {
+        KnowledgeEdgeSchema.parse(JSON.parse(fs.readFileSync(p, "utf8")));
+      } catch {
+        fs.cpSync(p, join(quarantine, f));
+        fs.rmSync(p);
+        removedEdges++;
+      }
+    }
+
+    return { removedNodes, removedEdges, quarantinedDir: quarantine };
+  }
 }
 
 

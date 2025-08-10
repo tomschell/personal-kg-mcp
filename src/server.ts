@@ -168,6 +168,33 @@ export function createPersonalKgServer(): McpServer {
   );
 
   server.tool(
+    "kg_backup",
+    { retentionDays: z.number().int().min(0).max(365).default(30) },
+    async ({ retentionDays }) => {
+      const res = storage.backup(retentionDays);
+      return { content: [{ type: "text", text: JSON.stringify(res, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_validate",
+    {},
+    async () => {
+      const res = storage.validate();
+      return { content: [{ type: "text", text: JSON.stringify(res, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_repair",
+    {},
+    async () => {
+      const res = storage.repair();
+      return { content: [{ type: "text", text: JSON.stringify(res, null, 2) }] };
+    }
+  );
+
+  server.tool(
     "kg_export",
     {},
     async () => {
