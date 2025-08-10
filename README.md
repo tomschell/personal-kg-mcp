@@ -17,6 +17,7 @@ Minimal scaffold for the Personal Knowledge Graph MCP server. Implements a healt
 - `kg_search`: { query?, tags?, type?, limit? }
 - `kg_delete_node`: { id, deleteEdges? }
 - `kg_export` / `kg_import`: backup/restore
+- `kg_capture_session`: { summary, duration?, artifacts?, next_actions?, visibility?, importance? }
 
 Planned:
 - `kg_backup`: create dated backup with retention

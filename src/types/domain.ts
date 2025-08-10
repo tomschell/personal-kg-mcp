@@ -1,4 +1,4 @@
-import { KnowledgeNodeType } from "./enums.js";
+import { ImportanceLevel, KnowledgeNodeType } from "./enums.js";
 
 export const KnowledgeVisibility = ["private", "team", "public"] as const;
 export type KnowledgeVisibility = typeof KnowledgeVisibility[number];
@@ -21,6 +21,7 @@ export interface KnowledgeNode {
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
   git?: GitContext;
+  importance?: typeof ImportanceLevel[number];
 }
 
 export interface KnowledgeEdge {
@@ -37,6 +38,7 @@ export interface CreateNodeInput {
   tags?: string[];
   visibility?: KnowledgeVisibility;
   git?: GitContext;
+  importance?: typeof ImportanceLevel[number];
 }
 
 export interface GitContext {

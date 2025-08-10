@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { KnowledgeNodeType } from "./enums.js";
+import { ImportanceLevel, KnowledgeNodeType } from "./enums.js";
 
 export const GitContextSchema = z.object({
   repositoryPath: z.string(),
@@ -16,6 +16,7 @@ export const KnowledgeNodeSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   git: GitContextSchema.optional(),
+  importance: z.enum(ImportanceLevel).optional(),
 });
 
 export const KnowledgeEdgeSchema = z.object({

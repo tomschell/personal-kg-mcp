@@ -5,10 +5,11 @@ config({ path: "../../.env" });
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { KnowledgeNodeType } from "./types/enums.js";
+import { ImportanceLevel, KnowledgeNodeType } from "./types/enums.js";
 import { getHealth } from "./handlers/health.js";
 import { FileStorage } from "./storage/FileStorage.js";
 import type { CreateNodeInput } from "./types/domain.js";
+import { findAutoLinks } from "./utils/autoLink.js";
 
 export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
 
@@ -34,7 +35,9 @@ export function createPersonalKgServer(): McpServer {
       type: z.enum(KnowledgeNodeType).default("idea"),
       tags: z.array(z.string()).optional(),
       visibility: z.enum(["private", "team", "public"]).optional(),
-      includeGit: z.boolean().default(false)
+      includeGit: z.boolean().default(false),
+      importance: z.enum(ImportanceLevel).default("medium"),
+      auto_link: z.boolean().default(true)
     },
     async (args) => {
       let git: CreateNodeInput["git"] | undefined;
@@ -49,8 +52,38 @@ export function createPersonalKgServer(): McpServer {
           // ignore git errors; leave git undefined
         }
       }
-      const input: CreateNodeInput = { content: args.content, type: args.type, tags: args.tags ?? [], visibility: args.visibility, git };
+      const input: CreateNodeInput = { content: args.content, type: args.type, tags: args.tags ?? [], visibility: args.visibility, git, importance: args.importance };
       const node = storage.createNode(input);
+      // optional auto-link
+      if (args.auto_link) {
+        const candidates = storage.searchNodes({ limit: 50 });
+        const links = findAutoLinks(candidates, node.content);
+        for (const id of links) storage.createEdge(node.id, id, "relates_to");
+      }
+      return { content: [{ type: "text", text: JSON.stringify({ accepted: true, node }, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_capture_session",
+    {
+      summary: z.string(),
+      duration: z.string().optional(),
+      artifacts: z.array(z.string()).optional(),
+      next_actions: z.array(z.string()).optional(),
+      visibility: z.enum(["private", "team", "public"]).optional(),
+      importance: z.enum(ImportanceLevel).default("medium"),
+    },
+    async ({ summary, duration, artifacts, next_actions, visibility, importance }) => {
+      const content = [
+        `Session Summary: ${summary}`,
+        duration ? `Duration: ${duration}` : undefined,
+        artifacts?.length ? `Artifacts: ${artifacts.join(", ")}` : undefined,
+        next_actions?.length ? `Next Actions: ${next_actions.join("; ")}` : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const node = storage.createNode({ content, type: "session", tags: ["session"], visibility, importance });
       return { content: [{ type: "text", text: JSON.stringify({ accepted: true, node }, null, 2) }] };
     }
   );

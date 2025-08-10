@@ -39,6 +39,7 @@ export class FileStorage {
       createdAt: now,
       updatedAt: now,
       git: input.git,
+      importance: input.importance,
     };
     const file = join(this.nodesDir, `${id}.json`);
     writeFileSync(file, JSON.stringify(node, null, 2), "utf8");
