@@ -25,6 +25,11 @@ Minimal scaffold for the Personal Knowledge Graph MCP server. Implements a healt
  - `kg_repair`: {} → quarantine and remove invalid files
  - `kg_query_time_range`: { start?, end?, query? }
 
+## Env (optional)
+- `PKG_STORAGE_DIR`: persistent storage path (default: `.kg`)
+- `PKG_AUTO_BACKUP_MINUTES`: if >0, run periodic backups on this interval
+- `PKG_BACKUP_RETENTION_DAYS`: keep backups for N days (default: 30)
+
 Planned:
 - `kg_backup`: create dated backup with retention
 - `kg_validate`: validate on-disk data and report issues

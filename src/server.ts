@@ -29,7 +29,23 @@ export function createPersonalKgServer(): McpServer {
   );
 
   // Minimal placeholder: capture node (spec-driven to be expanded)
-  server.tool(
+  function toolSafe<Schema extends Record<string, any>>(
+    name: string,
+    schema: Schema,
+    handler: (args: any) => Promise<any> | any
+  ) {
+    server.tool(name, schema as any, async (args: any) => {
+      try {
+        const result = await handler(args);
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return { content: [{ type: "text", text: JSON.stringify({ error: true, name, message }, null, 2) }] };
+      }
+    });
+  }
+
+  toolSafe(
     PERSONAL_KG_TOOLS[1],
     {
       content: z.string(),
@@ -65,7 +81,7 @@ export function createPersonalKgServer(): McpServer {
     }
   );
 
-  server.tool(
+  toolSafe(
     "kg_capture_session",
     {
       summary: z.string(),
@@ -125,7 +141,7 @@ export function createPersonalKgServer(): McpServer {
     }
   );
 
-  server.tool(
+  toolSafe(
     "kg_search",
     {
       query: z.string().optional(),
@@ -237,6 +253,19 @@ export function createPersonalKgServer(): McpServer {
 
 async function main() {
   const server = createPersonalKgServer();
+  // Optional auto-backup scheduler controlled by env
+  const minutes = Number(process.env.PKG_AUTO_BACKUP_MINUTES ?? "0");
+  const retention = Number(process.env.PKG_BACKUP_RETENTION_DAYS ?? "30");
+  if (Number.isFinite(minutes) && minutes > 0) {
+    const storageForBackup = new FileStorage({ baseDir: process.env.PKG_STORAGE_DIR ?? ".kg" });
+    setInterval(() => {
+      try {
+        storageForBackup.backup(Number.isFinite(retention) ? retention : 30);
+      } catch {
+        // ignore scheduler errors
+      }
+    }, minutes * 60 * 1000);
+  }
   await server.connect(new StdioServerTransport());
 }
 
