@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { CreateNodeInput, KnowledgeEdge, KnowledgeNode } from "../types/domain.js";
+import type { CreateNodeInput, KnowledgeEdge, KnowledgeNode, ExportPayload } from "../types/domain.js";
 
 export interface FileStorageConfig {
   baseDir: string;
@@ -94,6 +94,27 @@ export class FileStorage {
     const edges: KnowledgeEdge[] = entries.map((f) => JSON.parse(fs.readFileSync(join(this.edgesDir, f), "utf8")));
     if (!nodeId) return edges;
     return edges.filter((e) => e.fromNodeId === nodeId || e.toNodeId === nodeId);
+  }
+
+  exportAll(): ExportPayload {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const nodeFiles = fs.readdirSync(this.nodesDir).filter((f: string) => f.endsWith(".json"));
+    const edgeFiles = fs.readdirSync(this.edgesDir).filter((f: string) => f.endsWith(".json"));
+    const nodes: KnowledgeNode[] = nodeFiles.map((f: string) => JSON.parse(fs.readFileSync(join(this.nodesDir, f), "utf8")));
+    const edges: KnowledgeEdge[] = edgeFiles.map((f: string) => JSON.parse(fs.readFileSync(join(this.edgesDir, f), "utf8")));
+    return { nodes, edges };
+  }
+
+  importAll(payload: ExportPayload): { nodes: number; edges: number } {
+    for (const node of payload.nodes) {
+      const file = join(this.nodesDir, `${node.id}.json`);
+      writeFileSync(file, JSON.stringify(node, null, 2), "utf8");
+    }
+    for (const edge of payload.edges) {
+      const file = join(this.edgesDir, `${edge.id}.json`);
+      writeFileSync(file, JSON.stringify(edge, null, 2), "utf8");
+    }
+    return { nodes: payload.nodes.length, edges: payload.edges.length };
   }
 }
 

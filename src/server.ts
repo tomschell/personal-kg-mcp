@@ -104,6 +104,25 @@ export function createPersonalKgServer(): McpServer {
     }
   );
 
+  server.tool(
+    "kg_export",
+    {},
+    async () => {
+      const payload = storage.exportAll();
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "kg_import",
+    { payload: z.string() },
+    async ({ payload }) => {
+      const data = JSON.parse(payload);
+      const result = storage.importAll(data);
+      return { content: [{ type: "text", text: JSON.stringify({ success: true, ...result }, null, 2) }] };
+    }
+  );
+
   return server;
 }
 

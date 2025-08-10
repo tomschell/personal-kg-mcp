@@ -45,4 +45,9 @@ export interface GitContext {
   currentCommit: string;
 }
 
+export interface ExportPayload {
+  nodes: KnowledgeNode[];
+  edges: KnowledgeEdge[];
+}
+
 
