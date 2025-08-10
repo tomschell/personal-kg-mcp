@@ -7,4 +7,13 @@ Minimal scaffold for the Personal Knowledge Graph MCP server. Implements a healt
 - `build`: TypeScript build
 - `test`: Vitest
 
+## Tools
+- `kg_health`: returns server status
+- `kg_capture`: { content, type, tags?, includeGit? } → persists node
+- `kg_get_node`: { id } → retrieves a node
+- `kg_list_recent`: { limit? } → lists recent nodes
+- `kg_create_edge`: { fromNodeId, toNodeId, relation }
+- `kg_list_edges`: { nodeId? }
+- `kg_search`: { query?, tags?, type?, limit? }
+
 

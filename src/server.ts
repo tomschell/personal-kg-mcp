@@ -90,6 +90,20 @@ export function createPersonalKgServer(): McpServer {
     }
   );
 
+  server.tool(
+    "kg_search",
+    {
+      query: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      type: z.enum(KnowledgeNodeType).optional(),
+      limit: z.number().int().min(1).max(100).default(20),
+    },
+    async ({ query, tags, type, limit }) => {
+      const nodes = storage.searchNodes({ query, tags, type, limit });
+      return { content: [{ type: "text", text: JSON.stringify({ total: nodes.length, nodes }, null, 2) }] };
+    }
+  );
+
   return server;
 }
 

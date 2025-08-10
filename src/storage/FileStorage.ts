@@ -57,6 +57,29 @@ export class FileStorage {
     return nodes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
   }
 
+  searchNodes(params: {
+    query?: string;
+    tags?: string[];
+    type?: KnowledgeNode["type"];
+    limit?: number;
+  }): KnowledgeNode[] {
+    const { query, tags, type } = params;
+    const limit = params.limit ?? 20;
+    const fs = require("node:fs") as typeof import("node:fs");
+    const entries = fs.readdirSync(this.nodesDir).filter((f) => f.endsWith(".json"));
+    const nodes: KnowledgeNode[] = entries.map((f) => JSON.parse(fs.readFileSync(join(this.nodesDir, f), "utf8")));
+    const q = (query ?? "").toLowerCase();
+    const filtered = nodes.filter((n) => {
+      if (type && n.type !== type) return false;
+      if (tags && tags.length > 0 && !tags.every((t) => n.tags.includes(t))) return false;
+      if (q && !(n.content.toLowerCase().includes(q) || n.tags.some((t) => t.toLowerCase().includes(q)))) return false;
+      return true;
+    });
+    return filtered
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, limit);
+  }
+
   createEdge(fromNodeId: string, toNodeId: string, relation: KnowledgeEdge["relation"]): KnowledgeEdge {
     const id = randomUUID();
     const edge: KnowledgeEdge = { id, fromNodeId, toNodeId, relation, createdAt: new Date().toISOString() };
