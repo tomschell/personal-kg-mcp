@@ -2,14 +2,18 @@ import { describe, it, expect } from "vitest";
 import { FileStorage } from "../storage/FileStorage.js";
 import { createPersonalKgServer } from "../server.js";
 
-function parse(result: any) {
-  return JSON.parse(result.content[0].text);
+function parse(result: unknown) {
+  return JSON.parse(result.content[0].text as string);
 }
 
 describe("capture tools", () => {
   it("captures with importance (persisted)", () => {
     const storage = new FileStorage({ baseDir: ".kg-test-capture" });
-    const node = storage.createNode({ content: "Plan git integration", type: "idea", importance: "high" });
+    const node = storage.createNode({
+      content: "Plan git integration",
+      type: "idea",
+      importance: "high",
+    });
     expect(node.importance).toBe("high");
   });
 
@@ -21,9 +25,12 @@ describe("capture tools", () => {
       `Duration: 45m`,
       `Next Actions: Implement cache`,
     ].join("\n");
-    const node = storage.createNode({ content, type: "session", tags: ["session"], importance: "medium" });
+    const node = storage.createNode({
+      content,
+      type: "session",
+      tags: ["session"],
+      importance: "medium",
+    });
     expect(node.content).toContain("Session Summary");
   });
 });
-
-

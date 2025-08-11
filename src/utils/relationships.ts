@@ -9,5 +9,3 @@ export function scoreRelationship(a: KnowledgeNode, b: KnowledgeNode): number {
   const recency = Math.max(0, 1 - (ageA + ageB) / (1000 * 60 * 60 * 24 * 30)); // within ~30 days
   return Math.min(1, Math.max(0, base * 0.9 + recency * 0.1));
 }
-
-

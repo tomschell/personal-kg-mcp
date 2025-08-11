@@ -26,5 +26,3 @@ describe("backup & validate", () => {
     expect(v.invalidNodes).toBeGreaterThan(0);
   });
 });
-
-

@@ -18,5 +18,3 @@ describe("delete", () => {
     expect(storage.getNode(a.id)).toBeUndefined();
   });
 });
-
-

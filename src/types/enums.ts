@@ -7,20 +7,11 @@ export const KnowledgeNodeType = [
   "session",
 ] as const;
 
-export type KnowledgeNodeType = typeof KnowledgeNodeType[number];
+export type KnowledgeNodeType = (typeof KnowledgeNodeType)[number];
 
-export const ServerStatus = [
-  "ok",
-  "error",
-] as const;
+export const ServerStatus = ["ok", "error"] as const;
 
-export type ServerStatus = typeof ServerStatus[number];
+export type ServerStatus = (typeof ServerStatus)[number];
 
-export const ImportanceLevel = [
-  "high",
-  "medium",
-  "low",
-] as const;
-export type ImportanceLevel = typeof ImportanceLevel[number];
-
-
+export const ImportanceLevel = ["high", "medium", "low"] as const;
+export type ImportanceLevel = (typeof ImportanceLevel)[number];

@@ -1,8 +1,26 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, cpSync, readdirSync, statSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  rmSync,
+  cpSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { CreateNodeInput, KnowledgeEdge, KnowledgeNode, ExportPayload } from "../types/domain.js";
-import { ExportPayloadSchema, KnowledgeEdgeSchema, KnowledgeNodeSchema } from "../types/schemas.js";
+import type {
+  CreateNodeInput,
+  KnowledgeEdge,
+  KnowledgeNode,
+  ExportPayload,
+} from "../types/domain.js";
+import {
+  ExportPayloadSchema,
+  KnowledgeEdgeSchema,
+  KnowledgeNodeSchema,
+} from "../types/schemas.js";
 import { LruCache } from "./Cache.js";
 
 export interface FileStorageConfig {
@@ -25,6 +43,11 @@ export class FileStorage {
 
   private get edgesDir(): string {
     return join(this.baseDir, "edges");
+  }
+
+  // Expose edges directory path for maintenance tools that need direct file access
+  public getEdgesDir(): string {
+    return this.edgesDir;
   }
 
   createNode(input: CreateNodeInput): KnowledgeNode {
@@ -57,20 +80,69 @@ export class FileStorage {
     return node;
   }
 
+  updateNode(
+    id: string,
+    changes: {
+      content?: string;
+      appendContent?: string;
+      tags?: string[];
+      mergeTags?: string[];
+      visibility?: KnowledgeNode["visibility"];
+      importance?: KnowledgeNode["importance"];
+      git?: KnowledgeNode["git"];
+    },
+  ): KnowledgeNode | undefined {
+    const file = join(this.nodesDir, `${id}.json`);
+    if (!existsSync(file)) return undefined;
+    const node = JSON.parse(readFileSync(file, "utf8")) as KnowledgeNode;
+    if (typeof changes.content === "string") node.content = changes.content;
+    if (typeof changes.appendContent === "string" && changes.appendContent) {
+      node.content = `${node.content}\n${changes.appendContent}`.trim();
+    }
+    if (Array.isArray(changes.tags)) node.tags = changes.tags;
+    if (Array.isArray(changes.mergeTags) && changes.mergeTags.length > 0) {
+      const set = new Set<string>(node.tags);
+      for (const t of changes.mergeTags) set.add(t);
+      node.tags = Array.from(set);
+    }
+    if (changes.visibility) node.visibility = changes.visibility;
+    if (changes.importance) node.importance = changes.importance;
+    if (changes.git) node.git = changes.git;
+    node.updatedAt = new Date().toISOString();
+    writeFileSync(file, JSON.stringify(node, null, 2), "utf8");
+    this.nodeCache.set(id, node);
+    return node;
+  }
+
   listRecent(limit = 20): KnowledgeNode[] {
     // naive scan ordered by updatedAt desc
     const dir = this.nodesDir;
     const entries = readdirSync(dir).filter((f) => f.endsWith(".json"));
-    const nodes: KnowledgeNode[] = entries.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
-    return nodes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
+    const nodes: KnowledgeNode[] = entries.map((f) =>
+      JSON.parse(readFileSync(join(dir, f), "utf8")),
+    );
+    return nodes
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, limit);
   }
 
   listAllNodes(): KnowledgeNode[] {
-    const entries = readdirSync(this.nodesDir).filter((f) => f.endsWith(".json"));
-    return entries.map((f) => JSON.parse(readFileSync(join(this.nodesDir, f), "utf8")) as KnowledgeNode);
+    const entries = readdirSync(this.nodesDir).filter((f) =>
+      f.endsWith(".json"),
+    );
+    return entries.map(
+      (f) =>
+        JSON.parse(
+          readFileSync(join(this.nodesDir, f), "utf8"),
+        ) as KnowledgeNode,
+    );
   }
 
-  listByTimeRange(params: { start?: string; end?: string; query?: string }): KnowledgeNode[] {
+  listByTimeRange(params: {
+    start?: string;
+    end?: string;
+    query?: string;
+  }): KnowledgeNode[] {
     const { start, end, query } = params;
     const startTs = start ? Date.parse(start) : undefined;
     const endTs = end ? Date.parse(end) : undefined;
@@ -79,7 +151,12 @@ export class FileStorage {
       const ts = Date.parse(n.createdAt);
       if (startTs && ts < startTs) return false;
       if (endTs && ts > endTs) return false;
-      if (q && !n.content.toLowerCase().includes(q) && !n.tags.some((t) => t.toLowerCase().includes(q))) return false;
+      if (
+        q &&
+        !n.content.toLowerCase().includes(q) &&
+        !n.tags.some((t) => t.toLowerCase().includes(q))
+      )
+        return false;
       return true;
     });
   }
@@ -92,13 +169,25 @@ export class FileStorage {
   }): KnowledgeNode[] {
     const { query, tags, type } = params;
     const limit = params.limit ?? 20;
-    const entries = readdirSync(this.nodesDir).filter((f) => f.endsWith(".json"));
-    const nodes: KnowledgeNode[] = entries.map((f) => JSON.parse(readFileSync(join(this.nodesDir, f), "utf8")));
+    const entries = readdirSync(this.nodesDir).filter((f) =>
+      f.endsWith(".json"),
+    );
+    const nodes: KnowledgeNode[] = entries.map((f) =>
+      JSON.parse(readFileSync(join(this.nodesDir, f), "utf8")),
+    );
     const q = (query ?? "").toLowerCase();
     const filtered = nodes.filter((n) => {
       if (type && n.type !== type) return false;
-      if (tags && tags.length > 0 && !tags.every((t) => n.tags.includes(t))) return false;
-      if (q && !(n.content.toLowerCase().includes(q) || n.tags.some((t) => t.toLowerCase().includes(q)))) return false;
+      if (tags && tags.length > 0 && !tags.every((t) => n.tags.includes(t)))
+        return false;
+      if (
+        q &&
+        !(
+          n.content.toLowerCase().includes(q) ||
+          n.tags.some((t) => t.toLowerCase().includes(q))
+        )
+      )
+        return false;
       return true;
     });
     return filtered
@@ -106,19 +195,37 @@ export class FileStorage {
       .slice(0, limit);
   }
 
-  createEdge(fromNodeId: string, toNodeId: string, relation: KnowledgeEdge["relation"], extra?: Partial<KnowledgeEdge>): KnowledgeEdge {
+  createEdge(
+    fromNodeId: string,
+    toNodeId: string,
+    relation: KnowledgeEdge["relation"],
+    extra?: Partial<KnowledgeEdge>,
+  ): KnowledgeEdge {
     const id = randomUUID();
-    const edge: KnowledgeEdge = { id, fromNodeId, toNodeId, relation, createdAt: new Date().toISOString(), ...extra };
+    const edge: KnowledgeEdge = {
+      id,
+      fromNodeId,
+      toNodeId,
+      relation,
+      createdAt: new Date().toISOString(),
+      ...extra,
+    };
     const file = join(this.edgesDir, `${id}.json`);
     writeFileSync(file, JSON.stringify(edge, null, 2), "utf8");
     return edge;
   }
 
   listEdges(nodeId?: string): KnowledgeEdge[] {
-    const entries = readdirSync(this.edgesDir).filter((f) => f.endsWith(".json"));
-    const edges: KnowledgeEdge[] = entries.map((f) => JSON.parse(readFileSync(join(this.edgesDir, f), "utf8")));
+    const entries = readdirSync(this.edgesDir).filter((f) =>
+      f.endsWith(".json"),
+    );
+    const edges: KnowledgeEdge[] = entries.map((f) =>
+      JSON.parse(readFileSync(join(this.edgesDir, f), "utf8")),
+    );
     if (!nodeId) return edges;
-    return edges.filter((e) => e.fromNodeId === nodeId || e.toNodeId === nodeId);
+    return edges.filter(
+      (e) => e.fromNodeId === nodeId || e.toNodeId === nodeId,
+    );
   }
 
   deleteNode(id: string): boolean {
@@ -130,14 +237,13 @@ export class FileStorage {
   }
 
   deleteEdgesForNode(nodeId: string): number {
-    const fs = require("node:fs") as typeof import("node:fs");
-    const entries = fs.readdirSync(this.edgesDir).filter((f) => f.endsWith(".json"));
+    const entries = readdirSync(this.edgesDir).filter((f) => f.endsWith(".json"));
     let deleted = 0;
     for (const f of entries) {
       const p = join(this.edgesDir, f);
-      const e = JSON.parse(fs.readFileSync(p, "utf8")) as KnowledgeEdge;
+      const e = JSON.parse(readFileSync(p, "utf8")) as KnowledgeEdge;
       if (e.fromNodeId === nodeId || e.toNodeId === nodeId) {
-        fs.rmSync(p);
+        rmSync(p);
         deleted++;
       }
     }
@@ -145,10 +251,22 @@ export class FileStorage {
   }
 
   exportAll(): ExportPayload {
-    const nodeFiles = readdirSync(this.nodesDir).filter((f: string) => f.endsWith(".json"));
-    const edgeFiles = readdirSync(this.edgesDir).filter((f: string) => f.endsWith(".json"));
-    const nodes: KnowledgeNode[] = nodeFiles.map((f: string) => KnowledgeNodeSchema.parse(JSON.parse(readFileSync(join(this.nodesDir, f), "utf8"))));
-    const edges: KnowledgeEdge[] = edgeFiles.map((f: string) => KnowledgeEdgeSchema.parse(JSON.parse(readFileSync(join(this.edgesDir, f), "utf8"))));
+    const nodeFiles = readdirSync(this.nodesDir).filter((f: string) =>
+      f.endsWith(".json"),
+    );
+    const edgeFiles = readdirSync(this.edgesDir).filter((f: string) =>
+      f.endsWith(".json"),
+    );
+    const nodes: KnowledgeNode[] = nodeFiles.map((f: string) =>
+      KnowledgeNodeSchema.parse(
+        JSON.parse(readFileSync(join(this.nodesDir, f), "utf8")),
+      ),
+    );
+    const edges: KnowledgeEdge[] = edgeFiles.map((f: string) =>
+      KnowledgeEdgeSchema.parse(
+        JSON.parse(readFileSync(join(this.edgesDir, f), "utf8")),
+      ),
+    );
     return { nodes, edges };
   }
 
@@ -177,7 +295,8 @@ export class FileStorage {
       const path = join(backupsParent, entry);
       const stat = statSync(path);
       const ageDays = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24);
-      if (ageDays > retentionDays) rmSync(path, { recursive: true, force: true } as any);
+      if (ageDays > retentionDays)
+        rmSync(path, { recursive: true, force: true });
     }
     return { backupDir };
   }
@@ -188,7 +307,9 @@ export class FileStorage {
     for (const f of readdirSync(this.nodesDir)) {
       if (!f.endsWith(".json")) continue;
       try {
-        KnowledgeNodeSchema.parse(JSON.parse(readFileSync(join(this.nodesDir, f), "utf8")));
+        KnowledgeNodeSchema.parse(
+          JSON.parse(readFileSync(join(this.nodesDir, f), "utf8")),
+        );
       } catch {
         invalidNodes++;
       }
@@ -196,15 +317,25 @@ export class FileStorage {
     for (const f of readdirSync(this.edgesDir)) {
       if (!f.endsWith(".json")) continue;
       try {
-        KnowledgeEdgeSchema.parse(JSON.parse(readFileSync(join(this.edgesDir, f), "utf8")));
+        KnowledgeEdgeSchema.parse(
+          JSON.parse(readFileSync(join(this.edgesDir, f), "utf8")),
+        );
       } catch {
         invalidEdges++;
       }
     }
-    return { ok: invalidNodes === 0 && invalidEdges === 0, invalidNodes, invalidEdges };
+    return {
+      ok: invalidNodes === 0 && invalidEdges === 0,
+      invalidNodes,
+      invalidEdges,
+    };
   }
 
-  repair(): { removedNodes: number; removedEdges: number; quarantinedDir: string } {
+  repair(): {
+    removedNodes: number;
+    removedEdges: number;
+    quarantinedDir: string;
+  } {
     const quarantine = join(this.baseDir, "quarantine", Date.now().toString());
     mkdirSync(quarantine, { recursive: true });
     let removedNodes = 0;
@@ -239,5 +370,3 @@ export class FileStorage {
     return { removedNodes, removedEdges, quarantinedDir: quarantine };
   }
 }
-
-

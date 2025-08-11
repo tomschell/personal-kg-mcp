@@ -23,7 +23,13 @@ export const KnowledgeEdgeSchema = z.object({
   id: z.string().min(1),
   fromNodeId: z.string().min(1),
   toNodeId: z.string().min(1),
-  relation: z.enum(["references", "relates_to", "derived_from", "blocks", "duplicates"]),
+  relation: z.enum([
+    "references",
+    "relates_to",
+    "derived_from",
+    "blocks",
+    "duplicates",
+  ]),
   createdAt: z.string(),
 });
 
@@ -35,5 +41,3 @@ export const ExportPayloadSchema = z.object({
 export type KnowledgeNodeParsed = z.infer<typeof KnowledgeNodeSchema>;
 export type KnowledgeEdgeParsed = z.infer<typeof KnowledgeEdgeSchema>;
 export type ExportPayloadParsed = z.infer<typeof ExportPayloadSchema>;
-
-

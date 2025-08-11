@@ -19,5 +19,3 @@ export function buildGraphExport(storage: FileStorage) {
   }));
   return { nodes, edges };
 }
-
-

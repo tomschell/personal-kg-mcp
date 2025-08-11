@@ -5,7 +5,10 @@ function firstSentence(text: string): string {
   return m.slice(0, 200);
 }
 
-export function reconstructContext(nodes: KnowledgeNode[], topic: string): {
+export function reconstructContext(
+  nodes: KnowledgeNode[],
+  topic: string,
+): {
   topic: string;
   lastDiscussed?: string;
   keyPoints: string[];
@@ -13,16 +16,21 @@ export function reconstructContext(nodes: KnowledgeNode[], topic: string): {
   openQuestions: KnowledgeNode[];
   nextSteps: string[];
 } {
+  const topicLc = topic.toLowerCase();
   const filtered = nodes.filter(
     (n) =>
-      n.content.toLowerCase().includes(topic.toLowerCase()) ||
-      n.tags.some((t) => t.toLowerCase().includes(topic.toLowerCase()))
+      n.content.toLowerCase().includes(topicLc) ||
+      n.tags.some((t) => t.toLowerCase().includes(topicLc)),
   );
-  filtered.sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
+  filtered.sort((a, b) =>
+    (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt),
+  );
   const lastDiscussed = filtered[0]?.updatedAt ?? filtered[0]?.createdAt;
 
   const decisions = filtered.filter((n) => n.type === "decision").slice(0, 5);
-  const openQuestions = filtered.filter((n) => n.type === "question").slice(0, 5);
+  const openQuestions = filtered
+    .filter((n) => n.type === "question")
+    .slice(0, 5);
 
   const keyPoints = filtered
     .slice(0, 5)
@@ -43,7 +51,12 @@ export function reconstructContext(nodes: KnowledgeNode[], topic: string): {
     }
   }
 
-  return { topic, lastDiscussed, keyPoints, decisions, openQuestions, nextSteps };
+  return {
+    topic,
+    lastDiscussed,
+    keyPoints,
+    decisions,
+    openQuestions,
+    nextSteps,
+  };
 }
-
-

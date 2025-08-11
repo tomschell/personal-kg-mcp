@@ -1,7 +1,11 @@
 // Minimal local embedding: bag-of-words hashing to a fixed-size vector
 export function embedText(text: string, dim = 256): Float32Array {
   const vec = new Float32Array(dim);
-  const tokens = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
   for (const t of tokens) {
     let h = 2166136261;
     for (let i = 0; i < t.length; i++) h = (h ^ t.charCodeAt(i)) * 16777619;
@@ -21,5 +25,3 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   for (let i = 0; i < a.length; i++) s += a[i] * b[i];
   return s;
 }
-
-

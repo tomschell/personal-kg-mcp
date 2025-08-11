@@ -17,5 +17,3 @@ describe("semantic groundwork", () => {
     expect(all.length).toBeGreaterThan(0);
   });
 });
-
-

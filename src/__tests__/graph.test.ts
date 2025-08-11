@@ -13,5 +13,3 @@ describe("graph export", () => {
     expect(g.edges.length).toBeGreaterThan(0);
   });
 });
-
-

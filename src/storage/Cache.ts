@@ -23,5 +23,3 @@ export class LruCache<K, V> {
     this.map.clear();
   }
 }
-
-

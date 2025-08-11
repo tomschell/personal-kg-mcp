@@ -21,5 +21,3 @@ describe("maintenance tools", () => {
     expect(rep.removedNodes + rep.removedEdges).toBeGreaterThan(0);
   });
 });
-
-

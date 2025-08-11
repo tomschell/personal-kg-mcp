@@ -26,5 +26,3 @@ describe("FileStorage", () => {
     expect(list.length).toBe(2);
   });
 });
-
-

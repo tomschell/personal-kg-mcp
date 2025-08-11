@@ -8,5 +8,3 @@ describe("personal-kg-mcp", () => {
     expect(result.name).toBe("personal-kg-mcp");
   });
 });
-
-
