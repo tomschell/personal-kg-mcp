@@ -14,6 +14,7 @@ PKG_STORAGE_DIR=/Users/thomasschell/Coding/Hoistv2/data/knowledge/personal npm r
 - `kg_health`
 - `kg_capture` (alias: `capture_context`): { content, type, tags?, visibility?, includeGit?, importance?, auto_link? }
 - `kg_capture_session` (alias: `capture_session`): { summary, duration?, artifacts?, next_actions?, visibility?, importance? }
+- `kg_session_warmup`: { project?, workstream?, limit?, summaryLength? } → returns { recentNodes, projectState?, suggestedTopics, emergingConcepts }
 - `kg_get_node`, `kg_list_recent`, `kg_search`, `kg_semantic_search`, `kg_find_similar`
 - `kg_query_context` (alias: `query_context`)
 - `kg_export`, `kg_import`, `kg_backup`, `kg_validate`, `kg_repair`

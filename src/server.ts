@@ -5,6 +5,11 @@ config({ path: "../../.env" });
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+// Provide a CommonJS require in ESM context for hosts that expect it
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(globalThis as any).require = require;
 import { ImportanceLevel, KnowledgeNodeType } from "./types/enums.js";
 import { getHealth } from "./handlers/health.js";
 import { FileStorage } from "./storage/FileStorage.js";
@@ -90,6 +95,16 @@ export function createPersonalKgServer(): McpServer {
         // IMPORTANT: write logs to stderr to avoid corrupting MCP stdio JSON
         console.error(`[PKG] ${now} tool=${name}`);
       }
+    } catch {
+      // ignore logging failures
+    }
+  }
+
+  // Temporary helper for non-breaking deprecation notices
+  function warnDeprecated(toolName: string, message: string): void {
+    try {
+      // IMPORTANT: write warnings to stderr to avoid corrupting MCP stdio JSON
+      console.error(`[PKG][DEPRECATED] ${toolName}: ${message}`);
     } catch {
       // ignore logging failures
     }
@@ -235,6 +250,10 @@ export function createPersonalKgServer(): McpServer {
       ticket: z.string().optional(),
     },
     async (args) => {
+      warnDeprecated(
+        "capture_context",
+        "Use kg_capture instead; this alias will be removed in a future release.",
+      );
       logToolCall("capture_context", args);
       let git: CreateNodeInput["git"] | undefined;
       if (args.includeGit) {
@@ -389,6 +408,10 @@ export function createPersonalKgServer(): McpServer {
       importance: z.enum(ImportanceLevel).default("medium"),
     },
     async ({ summary, duration, artifacts, next_actions, visibility, importance }) => {
+      warnDeprecated(
+        "capture_session",
+        "Use kg_capture_session instead; this alias will be removed in a future release.",
+      );
       logToolCall("capture_session", { summary, duration, artifacts, next_actions, visibility, importance });
       const content = [
         `Session Summary: ${summary}`,
@@ -456,6 +479,10 @@ export function createPersonalKgServer(): McpServer {
     "kg_list_recent_summary",
     { limit: z.number().int().min(1).max(100).default(20), summaryLength: z.number().int().min(1).max(2000).optional() },
     async ({ limit, summaryLength }) => {
+      warnDeprecated(
+        "kg_list_recent_summary",
+        "Use kg_list_recent with format=\"summary\" and optional summaryLength instead; this convenience tool will be removed in a future release.",
+      );
       logToolCall("kg_list_recent_summary", { limit, summaryLength });
       const nodes = storage.listRecent(limit);
       const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "summary", summaryLength }) } as const;
@@ -467,6 +494,10 @@ export function createPersonalKgServer(): McpServer {
     "kg_list_recent_minimal",
     { limit: z.number().int().min(1).max(100).default(20) },
     async ({ limit }) => {
+      warnDeprecated(
+        "kg_list_recent_minimal",
+        "Use kg_list_recent with format=\"minimal\" instead; this convenience tool will be removed in a future release.",
+      );
       logToolCall("kg_list_recent_minimal", { limit });
       const nodes = storage.listRecent(limit);
       const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "minimal" }) } as const;
@@ -506,6 +537,10 @@ export function createPersonalKgServer(): McpServer {
     "kg_mark_blocks",
     { sourceId: z.string(), targetId: z.string() },
     async ({ sourceId, targetId }) => {
+      warnDeprecated(
+        "kg_mark_blocks",
+        "Use kg_create_edge with relation=\"blocks\" instead; this wrapper will be removed in a future release.",
+      );
       logToolCall("kg_mark_blocks", { sourceId, targetId });
       const a = storage.getNode(sourceId);
       const b = storage.getNode(targetId);
@@ -519,6 +554,10 @@ export function createPersonalKgServer(): McpServer {
     "kg_mark_blocked_by",
     { targetId: z.string(), blockerId: z.string() },
     async ({ targetId, blockerId }) => {
+      warnDeprecated(
+        "kg_mark_blocked_by",
+        "Use kg_create_edge with relation=\"blocks\" instead; this wrapper will be removed in a future release.",
+      );
       logToolCall("kg_mark_blocked_by", { targetId, blockerId });
       const a = storage.getNode(blockerId);
       const b = storage.getNode(targetId);
@@ -532,6 +571,7 @@ export function createPersonalKgServer(): McpServer {
     "kg_mark_derived_from",
     { childId: z.string(), parentId: z.string() },
     async ({ childId, parentId }) => {
+      // kept for ergonomics; consider deprecation in a later pass
       logToolCall("kg_mark_derived_from", { childId, parentId });
       const a = storage.getNode(childId);
       const b = storage.getNode(parentId);
@@ -545,6 +585,10 @@ export function createPersonalKgServer(): McpServer {
     "kg_mark_affects",
     { sourceId: z.string(), targetId: z.string() },
     async ({ sourceId, targetId }) => {
+      warnDeprecated(
+        "kg_mark_affects",
+        "Use kg_create_edge with relation=\"references\" instead; this wrapper will be removed in a future release.",
+      );
       logToolCall("kg_mark_affects", { sourceId, targetId });
       const a = storage.getNode(sourceId);
       const b = storage.getNode(targetId);
@@ -578,6 +622,10 @@ export function createPersonalKgServer(): McpServer {
       limit: z.number().int().min(1).max(10000).default(1000),
     },
     async ({ threshold, limit }) => {
+      warnDeprecated(
+        "kg_rebuild_relationships",
+        "Use kg_relationships_maintenance with rebuildThreshold instead; this tool will be removed in a future release.",
+      );
       logToolCall("kg_rebuild_relationships", { threshold, limit });
       const nodes = storage.listAllNodes().slice(0, limit);
       let created = 0;
@@ -657,6 +705,10 @@ export function createPersonalKgServer(): McpServer {
     "kg_prune_weak_relationships",
     { threshold: z.number().min(0).max(1).default(0.15) },
     async ({ threshold }) => {
+      warnDeprecated(
+        "kg_prune_weak_relationships",
+        "Use kg_relationships_maintenance with pruneThreshold instead; this tool will be removed in a future release.",
+      );
       logToolCall("kg_prune_weak_relationships", { threshold });
       const fs = await import("node:fs");
       const path = await import("node:path");
@@ -682,6 +734,10 @@ export function createPersonalKgServer(): McpServer {
     "kg_reclassify_relationships",
     { limit: z.number().int().min(1).max(10000).default(2000) },
     async ({ limit }) => {
+      warnDeprecated(
+        "kg_reclassify_relationships",
+        "Use kg_relationships_maintenance (rebuilds + prunes) or a future reclassify mode; this tool will be removed in a future release.",
+      );
       logToolCall("kg_reclassify_relationships", { limit });
       const fs = await import("node:fs");
       const path = await import("node:path");
@@ -776,6 +832,10 @@ export function createPersonalKgServer(): McpServer {
       summaryLength: z.number().int().min(1).max(2000).optional(),
     },
     async ({ query, tags, type, limit, summaryLength }) => {
+      warnDeprecated(
+        "kg_search_summary",
+        "Use kg_search with format=\"summary\" and optional summaryLength instead; this convenience tool will be removed in a future release.",
+      );
       logToolCall("kg_search_summary", { query, tags, type, limit, summaryLength });
       const all = storage.searchNodes({ query, tags, type, limit: 200 });
       const now = Date.now();
@@ -808,6 +868,10 @@ export function createPersonalKgServer(): McpServer {
       limit: z.number().int().min(1).max(100).default(20),
     },
     async ({ query, tags, type, limit }) => {
+      warnDeprecated(
+        "kg_search_minimal",
+        "Use kg_search with format=\"minimal\" instead; this convenience tool will be removed in a future release.",
+      );
       logToolCall("kg_search_minimal", { query, tags, type, limit });
       const all = storage.searchNodes({ query, tags, type, limit: 200 });
       const now = Date.now();
@@ -959,6 +1023,10 @@ export function createPersonalKgServer(): McpServer {
 
   // Expanded query: simple synonym expansion and unioned summary
   server.tool("kg_query_context_expanded", { topic: z.string() }, async ({ topic }) => {
+    warnDeprecated(
+      "kg_query_context_expanded",
+      "Use kg_query_context; the expanded variant does not add value currently and will be removed in a future release.",
+    );
     logToolCall("kg_query_context_expanded", { topic });
     const nodes = storage.listAllNodes();
     const base = reconstructContext(nodes, topic);
@@ -1011,6 +1079,83 @@ export function createPersonalKgServer(): McpServer {
       structuredContent: payload,
     };
   });
+
+  // Consolidated session warmup aggregator: combines project state and recent activity for quick LLM consumption
+  server.tool(
+    "kg_session_warmup",
+    {
+      project: z.string(),
+      workstream: z.string().optional(),
+      limit: z.number().int().min(1).max(100).default(20),
+    },
+    async ({ project, workstream, limit }) => {
+      logToolCall("kg_session_warmup", { project, workstream, limit });
+
+      // Build project tag and gather all nodes
+      const projTag = `proj:${project.trim().toLowerCase().replace(/\s+/g, "-")}`;
+      const nodes = storage.listAllNodes();
+
+      // Recent nodes across the entire KG
+      const recent = [...nodes]
+        .sort(
+          (a, b) =>
+            Date.parse(b.updatedAt || b.createdAt) -
+            Date.parse(a.updatedAt || a.createdAt),
+        )
+        .slice(0, limit);
+
+      // Project-specific nodes
+      const projectNodes = storage.searchNodes({ tags: [projTag], limit: 200 });
+      const edges = storage.listEdges();
+      const blockers = new Set<string>();
+      for (const e of edges) if (e.relation === "blocks") blockers.add(e.toNodeId);
+
+      // Rank project nodes by simple recency + tag density heuristic
+      const now = Date.now();
+      const ranked = projectNodes
+        .map((n) => {
+          const ageDays = Math.max(
+            0,
+            (now - Date.parse(n.updatedAt || n.createdAt)) /
+              (1000 * 60 * 60 * 24),
+          );
+          const recency = Math.max(0, 1 - ageDays / 30);
+          const tagDensity = n.tags.includes(projTag) ? 1 : 0;
+          const score = recency * 0.8 + tagDensity * 0.2;
+          return { n, score };
+        })
+        .sort((a, b) => b.score - a.score)
+        .map((x) => x.n);
+
+      const currentFocus = ranked.slice(0, 5).map((n) => n.content.split("\n")[0]);
+      const recentDecisions = projectNodes
+        .filter((n) => n.type === "decision")
+        .slice(0, 5);
+      const activeQuestions = projectNodes
+        .filter((n) => n.type === "question")
+        .slice(0, 5);
+      const blockerNodes = projectNodes.filter((n) => blockers.has(n.id)).slice(0, 10);
+      const completedTasks = projectNodes
+        .filter((n) => /\b(done|completed|finished|resolved)\b/i.test(n.content))
+        .slice(0, 10);
+
+      const payload = {
+        project: projTag,
+        workstream,
+        currentFocus,
+        recentDecisions,
+        activeQuestions,
+        blockers: blockerNodes,
+        completedTasks,
+        recent,
+      };
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+        structuredContent: payload,
+      };
+    },
+  );
 
   // Code-aware query: match by file path fragment and optional function name
   server.tool(
@@ -1088,6 +1233,10 @@ export function createPersonalKgServer(): McpServer {
 
   // Alias for compatibility: query_context
   server.tool("query_context", { query: z.string() }, async ({ query }) => {
+    warnDeprecated(
+      "query_context",
+      "Use kg_query_context instead; this alias will be removed in a future release.",
+    );
     logToolCall("query_context", { query });
     const summary = reconstructContext(storage.listAllNodes(), query);
     return {
