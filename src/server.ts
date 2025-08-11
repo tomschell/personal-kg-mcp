@@ -13,9 +13,12 @@ import { findAutoLinks } from "./utils/autoLink.js";
 import { cosineSimilarity, embedText } from "./utils/embeddings.js";
 import { AnnIndex } from "./utils/ann.js";
 import { reconstructContext } from "./utils/context.js";
-import { scoreRelationship } from "./utils/relationships.js";
+import { scoreRelationship, classifyRelationship, computeStrengthFactors } from "./utils/relationships.js";
 import { buildGraphExport } from "./utils/graph.js";
+import { formatNodes, type FormatOptions } from "./utils/format.js";
 import { buildTagCooccurrence, expandTags } from "./utils/tagstats.js";
+import { clusterBySimilarity } from "./utils/clustering.js";
+import { findEmergingConcepts } from "./utils/emerging.js";
 
 export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
 
@@ -284,7 +287,8 @@ export function createPersonalKgServer(): McpServer {
             const a = session;
             const b = node;
             const s = scoreRelationship(a, b);
-            storage.createEdge(args.sessionId, node.id, "references", { strength: s });
+            const relation = classifyRelationship(a, b);
+            storage.createEdge(args.sessionId, node.id, relation, { strength: s });
           }
         } catch {}
       }
@@ -294,10 +298,11 @@ export function createPersonalKgServer(): McpServer {
         for (const id of links) {
           const other = storage.getNode(id);
           const strength = other ? scoreRelationship(node, other) : undefined;
-          storage.createEdge(node.id, id, "relates_to", {
-            strength,
-            evidence: ["tags/content overlap"],
-          });
+          const relation = other ? classifyRelationship(node, other) : "relates_to";
+          const evidence = other
+            ? ["tags/content overlap", JSON.stringify(computeStrengthFactors(node, other))]
+            : ["tags/content overlap"];
+          storage.createEdge(node.id, id, relation, { strength, evidence });
         }
       }
       return {
@@ -421,11 +426,19 @@ export function createPersonalKgServer(): McpServer {
 
   server.tool(
     "kg_list_recent",
-    { limit: z.number().int().min(1).max(100).default(20) },
-    async ({ limit }) => {
-      logToolCall("kg_list_recent", { limit });
+    {
+      limit: z.number().int().min(1).max(100).default(20),
+      format: z.enum(["full", "summary", "minimal"]).optional(),
+      includeContent: z.boolean().optional(),
+      includeTags: z.boolean().optional(),
+      includeMetadata: z.boolean().optional(),
+      summaryLength: z.number().int().min(1).max(2000).optional(),
+    },
+    async ({ limit, format, includeContent, includeTags, includeMetadata, summaryLength }) => {
+      logToolCall("kg_list_recent", { limit, format, includeContent, includeTags, includeMetadata, summaryLength });
       const nodes = storage.listRecent(limit);
-      const payload = { total: nodes.length, nodes };
+      const fmt: FormatOptions = { format, includeContent, includeTags, includeMetadata, summaryLength };
+      const payload = { total: nodes.length, nodes: formatNodes(nodes, fmt) } as const;
       return {
         content: [
           {
@@ -435,6 +448,29 @@ export function createPersonalKgServer(): McpServer {
         ],
         structuredContent: payload,
       };
+    },
+  );
+
+  // Convenience aliases for summary/minimal formatting
+  server.tool(
+    "kg_list_recent_summary",
+    { limit: z.number().int().min(1).max(100).default(20), summaryLength: z.number().int().min(1).max(2000).optional() },
+    async ({ limit, summaryLength }) => {
+      logToolCall("kg_list_recent_summary", { limit, summaryLength });
+      const nodes = storage.listRecent(limit);
+      const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "summary", summaryLength }) } as const;
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
+    },
+  );
+
+  server.tool(
+    "kg_list_recent_minimal",
+    { limit: z.number().int().min(1).max(100).default(20) },
+    async ({ limit }) => {
+      logToolCall("kg_list_recent_minimal", { limit });
+      const nodes = storage.listRecent(limit);
+      const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "minimal" }) } as const;
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
     },
   );
 
@@ -545,19 +581,26 @@ export function createPersonalKgServer(): McpServer {
       logToolCall("kg_rebuild_relationships", { threshold, limit });
       const nodes = storage.listAllNodes().slice(0, limit);
       let created = 0;
+      let considered = 0;
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
           const s = scoreRelationship(nodes[i], nodes[j]);
+          considered++;
           if (s >= threshold) {
-            storage.createEdge(nodes[i].id, nodes[j].id, "relates_to", {
-              strength: s,
-            });
+            const relation = classifyRelationship(nodes[i], nodes[j]);
+            const evidence = [JSON.stringify(computeStrengthFactors(nodes[i], nodes[j]))];
+            storage.createEdge(nodes[i].id, nodes[j].id, relation, { strength: s, evidence });
             created++;
           }
         }
       }
       return {
-        content: [{ type: "text", text: JSON.stringify({ created }, null, 2) }],
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ created, considered }, null, 2),
+          },
+        ],
       };
     },
   );
@@ -578,7 +621,9 @@ export function createPersonalKgServer(): McpServer {
         for (let j = i + 1; j < nodes.length; j++) {
           const s = scoreRelationship(nodes[i], nodes[j]);
           if (s >= rebuildThreshold) {
-            storage.createEdge(nodes[i].id, nodes[j].id, "relates_to", { strength: s });
+            const relation = classifyRelationship(nodes[i], nodes[j]);
+            const evidence = [JSON.stringify(computeStrengthFactors(nodes[i], nodes[j]))];
+            storage.createEdge(nodes[i].id, nodes[j].id, relation, { strength: s, evidence });
             created++;
           }
         }
@@ -632,6 +677,48 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
+  // Batch reclassification: walk edges and recompute relation type and strength
+  server.tool(
+    "kg_reclassify_relationships",
+    { limit: z.number().int().min(1).max(10000).default(2000) },
+    async ({ limit }) => {
+      logToolCall("kg_reclassify_relationships", { limit });
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const edgesDir = storage.getEdgesDir();
+      const nodeCache = new Map<string, ReturnType<typeof storage.getNode>>();
+      function getNode(id: string) {
+        let n = nodeCache.get(id);
+        if (!n) {
+          n = storage.getNode(id);
+          nodeCache.set(id!, n);
+        }
+        return n;
+      }
+      const files = fs
+        .readdirSync(edgesDir)
+        .filter((f) => f.endsWith(".json"))
+        .slice(0, limit);
+      let updated = 0;
+      for (const f of files) {
+        const p = path.join(edgesDir, f);
+        const e = JSON.parse(fs.readFileSync(p, "utf8"));
+        const a = getNode(e.fromNodeId);
+        const b = getNode(e.toNodeId);
+        if (!a || !b) continue;
+        const s = scoreRelationship(a, b);
+        const relation = classifyRelationship(a, b);
+        const evidence = [JSON.stringify(computeStrengthFactors(a, b))];
+        const updatedEdge = { ...e, relation, strength: s, evidence };
+        fs.writeFileSync(p, JSON.stringify(updatedEdge, null, 2), "utf8");
+        updated++;
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify({ updated }, null, 2) }],
+      };
+    },
+  );
+
   server.tool(
     "kg_search",
     {
@@ -639,9 +726,14 @@ export function createPersonalKgServer(): McpServer {
       tags: z.array(z.string()).optional(),
       type: z.enum(KnowledgeNodeType).optional(),
       limit: z.number().int().min(1).max(100).default(20),
+      format: z.enum(["full", "summary", "minimal"]).optional(),
+      includeContent: z.boolean().optional(),
+      includeTags: z.boolean().optional(),
+      includeMetadata: z.boolean().optional(),
+      summaryLength: z.number().int().min(1).max(2000).optional(),
     },
-    async ({ query, tags, type, limit }) => {
-      logToolCall("kg_search", { query, tags, type, limit });
+    async ({ query, tags, type, limit, format, includeContent, includeTags, includeMetadata, summaryLength }) => {
+      logToolCall("kg_search", { query, tags, type, limit, format, includeContent, includeTags, includeMetadata, summaryLength });
       const all = storage.searchNodes({ query, tags, type, limit: 200 });
       // Rank blend: semantic (if query), tag overlap (if tags provided), recency
       const now = Date.now();
@@ -660,7 +752,8 @@ export function createPersonalKgServer(): McpServer {
       });
       scored.sort((a, b) => b.score - a.score);
       const nodes = scored.slice(0, limit).map((s) => s.node);
-      const payload = { total: nodes.length, nodes };
+      const fmt: FormatOptions = { format, includeContent, includeTags, includeMetadata, summaryLength };
+      const payload = { total: nodes.length, nodes: formatNodes(nodes, fmt) } as const;
       return {
         content: [
           {
@@ -670,6 +763,71 @@ export function createPersonalKgServer(): McpServer {
         ],
         structuredContent: payload,
       };
+    },
+  );
+
+  server.tool(
+    "kg_search_summary",
+    {
+      query: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      type: z.enum(KnowledgeNodeType).optional(),
+      limit: z.number().int().min(1).max(100).default(20),
+      summaryLength: z.number().int().min(1).max(2000).optional(),
+    },
+    async ({ query, tags, type, limit, summaryLength }) => {
+      logToolCall("kg_search_summary", { query, tags, type, limit, summaryLength });
+      const all = storage.searchNodes({ query, tags, type, limit: 200 });
+      const now = Date.now();
+      const qVec = query ? embedText(query, EMBED_DIM) : undefined;
+      const baseTags = (tags ?? []).map((t) => t.toLowerCase());
+      const scored = all.map((n) => {
+        const sem = qVec ? cosineSimilarity(qVec, embedText(n.content, EMBED_DIM)) : 0;
+        const nTags = new Set(n.tags.map((t) => t.toLowerCase()));
+        let tagOverlap = 0;
+        if (baseTags.length > 0) for (const t of baseTags) if (nTags.has(t)) tagOverlap += 1;
+        if (baseTags.length > 0) tagOverlap /= baseTags.length;
+        const ageDays = Math.max(0, (now - Date.parse(n.updatedAt || n.createdAt)) / (1000 * 60 * 60 * 24));
+        const recency = Math.max(0, 1 - ageDays / 30);
+        const score = sem * 0.6 + tagOverlap * 0.25 + recency * 0.15;
+        return { node: n, score };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      const nodes = scored.slice(0, limit).map((s) => s.node);
+      const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "summary", summaryLength }) } as const;
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
+    },
+  );
+
+  server.tool(
+    "kg_search_minimal",
+    {
+      query: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      type: z.enum(KnowledgeNodeType).optional(),
+      limit: z.number().int().min(1).max(100).default(20),
+    },
+    async ({ query, tags, type, limit }) => {
+      logToolCall("kg_search_minimal", { query, tags, type, limit });
+      const all = storage.searchNodes({ query, tags, type, limit: 200 });
+      const now = Date.now();
+      const qVec = query ? embedText(query, EMBED_DIM) : undefined;
+      const baseTags = (tags ?? []).map((t) => t.toLowerCase());
+      const scored = all.map((n) => {
+        const sem = qVec ? cosineSimilarity(qVec, embedText(n.content, EMBED_DIM)) : 0;
+        const nTags = new Set(n.tags.map((t) => t.toLowerCase()));
+        let tagOverlap = 0;
+        if (baseTags.length > 0) for (const t of baseTags) if (nTags.has(t)) tagOverlap += 1;
+        if (baseTags.length > 0) tagOverlap /= baseTags.length;
+        const ageDays = Math.max(0, (now - Date.parse(n.updatedAt || n.createdAt)) / (1000 * 60 * 60 * 24));
+        const recency = Math.max(0, 1 - ageDays / 30);
+        const score = sem * 0.6 + tagOverlap * 0.25 + recency * 0.15;
+        return { node: n, score };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      const nodes = scored.slice(0, limit).map((s) => s.node);
+      const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "minimal" }) } as const;
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
     },
   );
 
@@ -943,6 +1101,28 @@ export function createPersonalKgServer(): McpServer {
     const g = buildGraphExport(storage);
     return { content: [{ type: "text", text: JSON.stringify(g, null, 2) }] };
   });
+
+  server.tool(
+    "kg_detect_topic_clusters",
+    { limit: z.number().int().min(1).max(10000).default(500), threshold: z.number().min(0).max(1).default(0.55) },
+    async ({ limit, threshold }) => {
+      logToolCall("kg_detect_topic_clusters", { limit, threshold });
+      const nodes = storage.listAllNodes().slice(0, limit);
+      const clusters = clusterBySimilarity(nodes, threshold);
+      return { content: [{ type: "text", text: JSON.stringify({ total: clusters.length, clusters }, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "kg_find_emerging_concepts",
+    { limit: z.number().int().min(1).max(10000).default(500), windowDays: z.number().int().min(1).max(90).default(7) },
+    async ({ limit, windowDays }) => {
+      logToolCall("kg_find_emerging_concepts", { limit, windowDays });
+      const nodes = storage.listAllNodes().slice(0, limit);
+      const concepts = findEmergingConcepts(nodes, windowDays);
+      return { content: [{ type: "text", text: JSON.stringify({ total: concepts.length, concepts }, null, 2) }] };
+    },
+  );
 
   server.tool("kg_export", {}, async () => {
     logToolCall("kg_export");
