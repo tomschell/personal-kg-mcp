@@ -24,6 +24,7 @@ import { formatNodes, type FormatOptions } from "./utils/format.js";
 import { buildTagCooccurrence, expandTags } from "./utils/tagstats.js";
 import { clusterBySimilarity } from "./utils/clustering.js";
 import { findEmergingConcepts } from "./utils/emerging.js";
+import { WorkstreamDashboardService } from "./services/workstreamDashboard.js";
 
 export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
 
@@ -1310,6 +1311,52 @@ export function createPersonalKgServer(): McpServer {
           },
         ],
       };
+    },
+  );
+
+  server.tool(
+    "kg_workstream_dashboard",
+    {
+      timeWindow: z.enum(["1h", "8h", "24h", "week"]).default("24h"),
+      showContextSwitches: z.boolean().default(true),
+      showMetrics: z.boolean().default(true),
+      maxEntries: z.number().int().min(1).max(200).default(50),
+      outputFormat: z.enum(["timeline", "summary", "both"]).default("both"),
+    },
+    async ({ timeWindow, showContextSwitches, showMetrics, maxEntries, outputFormat }) => {
+      logToolCall("kg_workstream_dashboard", { timeWindow, showContextSwitches, showMetrics, maxEntries, outputFormat });
+      
+      try {
+        const nodes = storage.listAllNodes();
+        const dashboardService = new WorkstreamDashboardService(nodes);
+        
+        const result = await dashboardService.generateDashboard({
+          timeWindow,
+          showContextSwitches,
+          showMetrics,
+          maxEntries,
+          outputFormat,
+        });
+        
+        return {
+          content: [
+            {
+              type: "text",
+              text: result.formattedOutput,
+            },
+          ],
+        };
+      } catch (error) {
+        console.error("[PKG] Workstream dashboard error:", error);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error generating workstream dashboard: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+        };
+      }
     },
   );
 

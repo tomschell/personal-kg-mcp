@@ -177,19 +177,75 @@ export function buildTimeline(nodes: KnowledgeNode[]): TimelineOutput {
   const contextSwitches = timelineWithSwitches.filter(entry => entry.contextSwitch).length;
   const uniqueBranches = new Set(timelineWithSwitches.map(entry => entry.branch)).size;
   
-  // Calculate average focus duration (time between context switches)
-  let focusDuration = 0;
-  if (contextSwitches > 0) {
-    const totalTime = timelineWithSwitches[0]?.timeAgo || 0;
-    focusDuration = Math.round(totalTime / (contextSwitches + 1));
+  // Calculate average focus duration
+  let totalFocusTime = 0;
+  let focusPeriods = 0;
+  let currentBranch = "";
+  let branchStartTime = 0;
+  
+  for (const entry of timelineWithSwitches) {
+    if (entry.branch !== currentBranch) {
+      if (currentBranch !== "") {
+        totalFocusTime += entry.timeAgo - branchStartTime;
+        focusPeriods++;
+      }
+      currentBranch = entry.branch;
+      branchStartTime = entry.timeAgo;
+    }
   }
+  
+  const avgFocusDuration = focusPeriods > 0 ? Math.round(totalFocusTime / focusPeriods) : 0;
   
   return {
     timeline: timelineWithSwitches,
     metrics: {
       contextSwitches,
       activeBranches: uniqueBranches,
-      focusDuration
+      focusDuration: avgFocusDuration
     }
   };
+}
+
+/**
+ * Aggregate branch activity from timeline entries
+ */
+export function aggregateBranchActivity(timeline: TimelineEntry[]): BranchActivity[] {
+  const branchMap = new Map<string, BranchActivity>();
+  
+  for (const entry of timeline) {
+    if (!branchMap.has(entry.branch)) {
+      branchMap.set(entry.branch, {
+        branch: entry.branch,
+        commits: [],
+        status: "idle",
+        lastActivity: entry.timeAgo
+      });
+    }
+    
+    const activity = branchMap.get(entry.branch)!;
+    activity.commits.push({
+      id: entry.nodeId,
+      type: entry.type,
+      timeAgo: entry.timeAgo,
+      tags: entry.tags
+    });
+    
+    // Update last activity (smaller number = more recent)
+    if (entry.timeAgo < activity.lastActivity) {
+      activity.lastActivity = entry.timeAgo;
+    }
+  }
+  
+  // Calculate status for each branch
+  for (const activity of branchMap.values()) {
+    if (activity.lastActivity <= 60) { // Within last hour
+      activity.status = "active";
+    } else if (activity.lastActivity <= 480) { // Within last 8 hours
+      activity.status = "recent";
+    } else {
+      activity.status = "idle";
+    }
+  }
+  
+  return Array.from(branchMap.values());
 }
