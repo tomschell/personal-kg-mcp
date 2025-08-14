@@ -33,14 +33,16 @@ export interface TimelineOutput {
 /**
  * Extract branch identifier from KG node tags
  * Looks for patterns like proj:*, ws:*, issue:* and combines them
+ * Returns "main" for general work without specific project/issue tags
  */
 export function extractBranchFromTags(tags: string[]): string | null {
   const projectTags = tags.filter(t => t.startsWith("proj:"));
   const workstreamTags = tags.filter(t => t.startsWith("ws:"));
   const issueTags = tags.filter(t => t.startsWith("issue:"));
   
+  // If no specific project/workstream/issue tags, this is main branch work
   if (projectTags.length === 0 && workstreamTags.length === 0 && issueTags.length === 0) {
-    return null;
+    return "main";
   }
   
   const parts: string[] = [];
@@ -74,8 +76,9 @@ export function getTimeAgoMinutes(timestamp: string): number {
 }
 
 /**
- * Detect context switches in timeline
+ * Detect context switches and completed work in timeline
  * A context switch occurs when the branch changes between consecutive entries
+ * Completed work is detected based on node types and tags
  */
 export function detectContextSwitches(timeline: TimelineEntry[]): TimelineEntry[] {
   if (timeline.length <= 1) {
@@ -90,9 +93,54 @@ export function detectContextSwitches(timeline: TimelineEntry[]): TimelineEntry[
     
     // Mark as context switch if branch changed
     current.contextSwitch = current.branch !== previous.branch;
+    
+    // Detect completed work that should flow back to main
+    if (isCompletedWork(current) && current.branch !== "main") {
+      // Create a merge commit to main
+      const mergeEntry: TimelineEntry = {
+        branch: "main",
+        type: "merge",
+        timeAgo: current.timeAgo + 1, // Slightly after the completion
+        contextSwitch: true,
+        nodeId: `merge-${current.nodeId}`,
+        tags: [...current.tags, "merge", "completed"]
+      };
+      
+      // Insert merge entry after current entry
+      result.splice(i + 1, 0, mergeEntry);
+      i++; // Skip the newly inserted entry in next iteration
+    }
   }
   
   return result;
+}
+
+/**
+ * Determine if a timeline entry represents completed work
+ */
+function isCompletedWork(entry: TimelineEntry): boolean {
+  // Check for completion indicators in tags
+  const completionTags = ["completed", "done", "finished", "resolved", "closed"];
+  const hasCompletionTag = entry.tags.some(tag => 
+    completionTags.some(completionTag => 
+      tag.toLowerCase().includes(completionTag)
+    )
+  );
+  
+  // Check for completion indicators in type
+  const completionTypes = ["decision", "progress", "insight"];
+  const hasCompletionType = completionTypes.includes(entry.type);
+  
+  // Check for issue completion patterns
+  const hasIssueCompletion = entry.tags.some(tag => 
+    tag.startsWith("issue:") && (
+      tag.includes("closed") || 
+      tag.includes("resolved") || 
+      tag.includes("completed")
+    )
+  );
+  
+  return hasCompletionTag || hasCompletionType || hasIssueCompletion;
 }
 
 /**

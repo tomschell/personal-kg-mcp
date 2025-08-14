@@ -137,7 +137,7 @@ export class WorkstreamDashboardService {
         branch !== "";
       
       timeline.push({
-        branch: branch || "unknown",
+        branch: branch || "main", // Default to main instead of unknown
         type: node.type || "unknown",
         timeAgo,
         contextSwitch,

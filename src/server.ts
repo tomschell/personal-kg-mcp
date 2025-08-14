@@ -1081,16 +1081,65 @@ export function createPersonalKgServer(): McpServer {
     };
   });
 
-  // Consolidated session warmup aggregator: combines project state and recent activity for quick LLM consumption
+  // Generate attention alerts from dashboard data
+  function generateAttentionAlerts(dashboardResult: any): any[] {
+    const alerts = [];
+    const { metrics, timeline } = dashboardResult;
+    
+    // Rapid context switching alert
+    if (metrics.contextSwitches > 5) {
+      alerts.push({
+        type: 'rapid_switching',
+        severity: metrics.contextSwitches > 10 ? 'high' : 'medium',
+        message: `High fragmentation: ${metrics.contextSwitches} context switches detected`,
+        suggestion: 'Consider batching related tasks to reduce context switching',
+        affectedBranches: [...new Set(timeline.map((t: any) => t.branch))],
+        timeframe: 'recent'
+      });
+    }
+    
+    // Focus drift alert
+    if (metrics.focusDuration < 15) {
+      alerts.push({
+        type: 'focus_drift',
+        severity: 'medium',
+        message: `Low focus duration: average ${metrics.focusDuration} minutes per session`,
+        suggestion: 'Try to maintain focus on single tasks for longer periods',
+        affectedBranches: [...new Set(timeline.map((t: any) => t.branch))],
+        timeframe: 'recent'
+      });
+    }
+    
+    // Inactive branches alert
+    const activeBranches = new Set(timeline.map((t: any) => t.branch));
+    if (activeBranches.size > 3) {
+      alerts.push({
+        type: 'inactive_branch',
+        severity: 'low',
+        message: `Multiple active branches: ${activeBranches.size} branches in recent activity`,
+        suggestion: 'Consider consolidating work on fewer branches',
+        affectedBranches: Array.from(activeBranches),
+        timeframe: 'recent'
+      });
+    }
+    
+    return alerts;
+  }
+
+  // Enhanced session warmup aggregator: combines project state, recent activity, and workstream dashboard for comprehensive context
   server.tool(
     "kg_session_warmup",
     {
       project: z.string(),
       workstream: z.string().optional(),
       limit: z.number().int().min(1).max(100).default(20),
+      includeDashboard: z.boolean().default(false),
+      dashboardTimeWindow: z.enum(["1h", "8h", "24h", "week"]).default("24h"),
+      dashboardFormat: z.enum(["timeline", "summary", "both"]).default("summary"),
+      showAttentionAlerts: z.boolean().default(true),
     },
-    async ({ project, workstream, limit }) => {
-      logToolCall("kg_session_warmup", { project, workstream, limit });
+    async ({ project, workstream, limit, includeDashboard, dashboardTimeWindow, dashboardFormat, showAttentionAlerts }) => {
+      logToolCall("kg_session_warmup", { project, workstream, limit, includeDashboard, dashboardTimeWindow, dashboardFormat, showAttentionAlerts });
 
       // Build project tag and gather all nodes
       const projTag = `proj:${project.trim().toLowerCase().replace(/\s+/g, "-")}`;
@@ -1140,7 +1189,8 @@ export function createPersonalKgServer(): McpServer {
         .filter((n) => /\b(done|completed|finished|resolved)\b/i.test(n.content))
         .slice(0, 10);
 
-      const payload = {
+      // Enhanced payload with dashboard integration
+      const payload: any = {
         project: projTag,
         workstream,
         currentFocus,
@@ -1150,6 +1200,44 @@ export function createPersonalKgServer(): McpServer {
         completedTasks,
         recent,
       };
+
+      // Include workstream dashboard data if requested
+      if (includeDashboard) {
+        try {
+          // Import the workstream dashboard service
+          const { WorkstreamDashboardService } = await import("./services/workstreamDashboard.js");
+          
+          // Create dashboard service instance
+          const dashboardService = new WorkstreamDashboardService(nodes);
+          
+          // Generate dashboard data
+          const dashboardResult = await dashboardService.generateDashboard({
+            timeWindow: dashboardTimeWindow,
+            showContextSwitches: true,
+            showMetrics: true,
+            maxEntries: 30,
+            outputFormat: dashboardFormat
+          });
+
+          // Add dashboard data to payload
+          payload.dashboard = {
+            timeWindow: dashboardTimeWindow,
+            timeline: dashboardResult.timeline.slice(0, 10), // Limit for warmup
+            metrics: dashboardResult.metrics,
+            formattedOutput: dashboardResult.formattedOutput
+          };
+
+          // Generate attention alerts if requested
+          if (showAttentionAlerts) {
+            const alerts = generateAttentionAlerts(dashboardResult);
+            payload.attentionAlerts = alerts;
+          }
+
+        } catch (error) {
+          console.warn("Failed to include dashboard in session warmup:", error);
+          payload.dashboard = { error: "Dashboard data unavailable" };
+        }
+      }
 
       return {
         content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
