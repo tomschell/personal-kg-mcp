@@ -1,7 +1,6 @@
 {
   "name": "personal-kg-mcp",
-  "version": "0.1.0",
-  "private": true,
+  "version": "2.0.0",
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
@@ -12,7 +11,8 @@
     "start:modular": "node dist/server-modular.js",
     "start:cjs": "node server.cjs",
     "test": "vitest run --config vitest.config.ts",
-    "test:unit": "vitest run --config vitest.config.ts --reporter=verbose"
+    "test:unit": "vitest run --config vitest.config.ts --reporter=verbose",
+    "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.16.0",
@@ -25,6 +25,18 @@
     "typescript": "^5.5.4",
     "vitest": "^2.1.8"
   }
+  ,
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "src", "server.cjs", "README.md", "LICENSE"],
+  "keywords": ["mcp", "knowledge-graph", "personal-kg", "model-context-protocol"],
+  "author": "Thomas Schell",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tomschell/personal-kg-mcp-v2.git"
+  },
+  "bugs": { "url": "https://github.com/tomschell/personal-kg-mcp-v2/issues" },
+  "homepage": "https://github.com/tomschell/personal-kg-mcp-v2#readme"
 }
 
 
