@@ -24,7 +24,7 @@ import { formatNodes, type FormatOptions } from "./utils/format.js";
 import { buildTagCooccurrence, expandTags } from "./utils/tagstats.js";
 import { clusterBySimilarity } from "./utils/clustering.js";
 import { findEmergingConcepts } from "./utils/emerging.js";
-// Workstream dashboard removed per spec
+import { WorkstreamDashboardService } from "./services/workstreamDashboard.js";
 
 export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
 
@@ -251,108 +251,7 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  // Alias for Issue #62 acceptance: capture_context
-  server.tool(
-    "capture_context",
-    {
-      content: z.string(),
-      type: z.enum(KnowledgeNodeType).default("idea"),
-      tags: z.array(z.string()).optional(),
-      visibility: z.enum(["private", "team", "public"]).optional(),
-      includeGit: z.boolean().default(false),
-      importance: z.enum(ImportanceLevel).default("medium"),
-      auto_link: z.boolean().default(true),
-      sessionId: z.string().optional(),
-      link_to_session: z.boolean().default(true),
-      project: z.string().optional(),
-      workstream: z.string().optional(),
-      ticket: z.string().optional(),
-    },
-    async (args) => {
-      warnDeprecated(
-        "capture_context",
-        "Use kg_capture instead; this alias will be removed in a future release.",
-      );
-      logToolCall("capture_context", args);
-      let git: CreateNodeInput["git"] | undefined;
-      if (args.includeGit) {
-        try {
-          const { execSync } = await import("node:child_process");
-          const branch = execSync("git rev-parse --abbrev-ref HEAD", {
-            stdio: ["ignore", "pipe", "ignore"],
-          })
-            .toString()
-            .trim();
-          const commit = execSync("git rev-parse HEAD", {
-            stdio: ["ignore", "pipe", "ignore"],
-          })
-            .toString()
-            .trim();
-          const repoPath = process.cwd();
-          git = {
-            repositoryPath: repoPath,
-            currentBranch: branch,
-            currentCommit: commit,
-          };
-        } catch {
-          // ignore git errors; leave git undefined
-        }
-      }
-      const normalizedTags = normalizeTags(
-        args.tags,
-        args.project,
-        args.workstream,
-        args.ticket,
-      );
-      const input: CreateNodeInput = {
-        content: args.content,
-        type: args.type,
-        tags: normalizedTags,
-        visibility: args.visibility,
-        git,
-        importance: args.importance,
-      };
-      const node = storage.createNode(input);
-      if (USE_ANN) {
-        try {
-          ann.add(node.id, embedText(node.content, EMBED_DIM));
-        } catch {}
-      }
-      if (args.sessionId && args.link_to_session) {
-        try {
-          const session = storage.getNode(args.sessionId);
-          if (session && session.type === "session") {
-            const a = session;
-            const b = node;
-            const s = scoreRelationship(a, b);
-            const relation = classifyRelationship(a, b);
-            storage.createEdge(args.sessionId, node.id, relation, { strength: s });
-          }
-        } catch {}
-      }
-      if (args.auto_link) {
-        const candidates = storage.searchNodes({ limit: 50 });
-        const links = findAutoLinks(candidates, node.content);
-        for (const id of links) {
-          const other = storage.getNode(id);
-          const strength = other ? scoreRelationship(node, other) : undefined;
-          const relation = other ? classifyRelationship(node, other) : "relates_to";
-          const evidence = other
-            ? ["tags/content overlap", JSON.stringify(computeStrengthFactors(node, other))]
-            : ["tags/content overlap"];
-          storage.createEdge(node.id, id, relation, { strength, evidence });
-        }
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ accepted: true, node }, null, 2),
-          },
-        ],
-      };
-    },
-  );
+
 
   server.tool(
     "kg_capture_session",
@@ -428,48 +327,7 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  // Alias for Issue #62 acceptance: capture_session
-  server.tool(
-    "capture_session",
-    {
-      summary: z.string(),
-      duration: z.string().optional(),
-      artifacts: z.array(z.string()).optional(),
-      next_actions: z.array(z.string()).optional(),
-      visibility: z.enum(["private", "team", "public"]).optional(),
-      importance: z.enum(ImportanceLevel).default("medium"),
-    },
-    async ({ summary, duration, artifacts, next_actions, visibility, importance }) => {
-      warnDeprecated(
-        "capture_session",
-        "Use kg_capture_session instead; this alias will be removed in a future release.",
-      );
-      logToolCall("capture_session", { summary, duration, artifacts, next_actions, visibility, importance });
-      const content = [
-        `Session Summary: ${summary}`,
-        duration ? `Duration: ${duration}` : undefined,
-        artifacts?.length ? `Artifacts: ${artifacts.join(", ")}` : undefined,
-        next_actions?.length ? `Next Actions: ${next_actions.join("; ")}` : undefined,
-      ]
-        .filter(Boolean)
-        .join("\n");
-      const node = storage.createNode({
-        content,
-        type: "session",
-        tags: ["session"],
-        visibility,
-        importance,
-      });
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ accepted: true, node }, null, 2),
-          },
-        ],
-      };
-    },
-  );
+
 
   server.tool(
     "kg_get_node",
@@ -512,36 +370,7 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  // Convenience aliases for summary/minimal formatting
-  server.tool(
-    "kg_list_recent_summary",
-    { limit: z.number().int().min(1).max(100).default(20), summaryLength: z.number().int().min(1).max(2000).optional() },
-    async ({ limit, summaryLength }) => {
-      warnDeprecated(
-        "kg_list_recent_summary",
-        "Use kg_list_recent with format=\"summary\" and optional summaryLength instead; this convenience tool will be removed in a future release.",
-      );
-      logToolCall("kg_list_recent_summary", { limit, summaryLength });
-      const nodes = storage.listRecent(limit);
-      const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "summary", summaryLength }) } as const;
-      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
-    },
-  );
 
-  server.tool(
-    "kg_list_recent_minimal",
-    { limit: z.number().int().min(1).max(100).default(20) },
-    async ({ limit }) => {
-      warnDeprecated(
-        "kg_list_recent_minimal",
-        "Use kg_list_recent with format=\"minimal\" instead; this convenience tool will be removed in a future release.",
-      );
-      logToolCall("kg_list_recent_minimal", { limit });
-      const nodes = storage.listRecent(limit);
-      const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "minimal" }) } as const;
-      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
-    },
-  );
 
   server.tool(
     "kg_create_edge",
@@ -574,71 +403,13 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  // Dependency markers and convenience relations
-  server.tool(
-    "kg_mark_blocks",
-    { sourceId: z.string(), targetId: z.string() },
-    async ({ sourceId, targetId }) => {
-      warnDeprecated(
-        "kg_mark_blocks",
-        "Use kg_create_edge with relation=\"blocks\" instead; this wrapper will be removed in a future release.",
-      );
-      logToolCall("kg_mark_blocks", { sourceId, targetId });
-      const a = storage.getNode(sourceId);
-      const b = storage.getNode(targetId);
-      const s = a && b ? scoreRelationship(a, b) : undefined;
-      const edge = storage.createEdge(sourceId, targetId, "blocks", { strength: s });
-      return { content: [{ type: "text", text: JSON.stringify({ edge }, null, 2) }] };
-    },
-  );
 
-  server.tool(
-    "kg_mark_blocked_by",
-    { targetId: z.string(), blockerId: z.string() },
-    async ({ targetId, blockerId }) => {
-      warnDeprecated(
-        "kg_mark_blocked_by",
-        "Use kg_create_edge with relation=\"blocks\" instead; this wrapper will be removed in a future release.",
-      );
-      logToolCall("kg_mark_blocked_by", { targetId, blockerId });
-      const a = storage.getNode(blockerId);
-      const b = storage.getNode(targetId);
-      const s = a && b ? scoreRelationship(a, b) : undefined;
-      const edge = storage.createEdge(blockerId, targetId, "blocks", { strength: s });
-      return { content: [{ type: "text", text: JSON.stringify({ edge }, null, 2) }] };
-    },
-  );
 
-  server.tool(
-    "kg_mark_derived_from",
-    { childId: z.string(), parentId: z.string() },
-    async ({ childId, parentId }) => {
-      // kept for ergonomics; consider deprecation in a later pass
-      logToolCall("kg_mark_derived_from", { childId, parentId });
-      const a = storage.getNode(childId);
-      const b = storage.getNode(parentId);
-      const s = a && b ? scoreRelationship(a, b) : undefined;
-      const edge = storage.createEdge(childId, parentId, "derived_from", { strength: s });
-      return { content: [{ type: "text", text: JSON.stringify({ edge }, null, 2) }] };
-    },
-  );
 
-  server.tool(
-    "kg_mark_affects",
-    { sourceId: z.string(), targetId: z.string() },
-    async ({ sourceId, targetId }) => {
-      warnDeprecated(
-        "kg_mark_affects",
-        "Use kg_create_edge with relation=\"references\" instead; this wrapper will be removed in a future release.",
-      );
-      logToolCall("kg_mark_affects", { sourceId, targetId });
-      const a = storage.getNode(sourceId);
-      const b = storage.getNode(targetId);
-      const s = a && b ? scoreRelationship(a, b) : undefined;
-      const edge = storage.createEdge(sourceId, targetId, "references", { strength: s });
-      return { content: [{ type: "text", text: JSON.stringify({ edge }, null, 2) }] };
-    },
-  );
+
+
+
+
 
   server.tool(
     "kg_list_edges",
@@ -661,43 +432,7 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  server.tool(
-    "kg_rebuild_relationships",
-    {
-      threshold: z.number().min(0).max(1).default(0.35),
-      limit: z.number().int().min(1).max(10000).default(1000),
-    },
-    async ({ threshold, limit }) => {
-      warnDeprecated(
-        "kg_rebuild_relationships",
-        "Use kg_relationships_maintenance with rebuildThreshold instead; this tool will be removed in a future release.",
-      );
-      logToolCall("kg_rebuild_relationships", { threshold, limit });
-      const nodes = storage.listAllNodes().slice(0, limit);
-      let created = 0;
-      let considered = 0;
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const s = scoreRelationship(nodes[i], nodes[j]);
-          considered++;
-          if (s >= threshold) {
-            const relation = classifyRelationship(nodes[i], nodes[j]);
-            const evidence = [JSON.stringify(computeStrengthFactors(nodes[i], nodes[j]))];
-            storage.createEdge(nodes[i].id, nodes[j].id, relation, { strength: s, evidence });
-            created++;
-          }
-        }
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ created, considered }, null, 2),
-          },
-        ],
-      };
-    },
-  );
+
 
   // Maintenance wrapper: rebuild then prune
   server.tool(
@@ -747,79 +482,9 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  server.tool(
-    "kg_prune_weak_relationships",
-    { threshold: z.number().min(0).max(1).default(0.15) },
-    async ({ threshold }) => {
-      warnDeprecated(
-        "kg_prune_weak_relationships",
-        "Use kg_relationships_maintenance with pruneThreshold instead; this tool will be removed in a future release.",
-      );
-      logToolCall("kg_prune_weak_relationships", { threshold });
-      const fs = await import("node:fs");
-      const path = await import("node:path");
-      const edgesDir = storage.getEdgesDir();
-      let removed = 0;
-      for (const f of fs.readdirSync(edgesDir)) {
-        if (!f.endsWith(".json")) continue;
-        const p = path.join(edgesDir, f);
-        const e = JSON.parse(fs.readFileSync(p, "utf8"));
-        if (typeof e.strength === "number" && e.strength < threshold) {
-          fs.rmSync(p);
-          removed++;
-        }
-      }
-      return {
-        content: [{ type: "text", text: JSON.stringify({ removed }, null, 2) }],
-      };
-    },
-  );
 
-  // Batch reclassification: walk edges and recompute relation type and strength
-  server.tool(
-    "kg_reclassify_relationships",
-    { limit: z.number().int().min(1).max(10000).default(2000) },
-    async ({ limit }) => {
-      warnDeprecated(
-        "kg_reclassify_relationships",
-        "Use kg_relationships_maintenance (rebuilds + prunes) or a future reclassify mode; this tool will be removed in a future release.",
-      );
-      logToolCall("kg_reclassify_relationships", { limit });
-      const fs = await import("node:fs");
-      const path = await import("node:path");
-      const edgesDir = storage.getEdgesDir();
-      const nodeCache = new Map<string, ReturnType<typeof storage.getNode>>();
-      function getNode(id: string) {
-        let n = nodeCache.get(id);
-        if (!n) {
-          n = storage.getNode(id);
-          nodeCache.set(id!, n);
-        }
-        return n;
-      }
-      const files = fs
-        .readdirSync(edgesDir)
-        .filter((f) => f.endsWith(".json"))
-        .slice(0, limit);
-      let updated = 0;
-      for (const f of files) {
-        const p = path.join(edgesDir, f);
-        const e = JSON.parse(fs.readFileSync(p, "utf8"));
-        const a = getNode(e.fromNodeId);
-        const b = getNode(e.toNodeId);
-        if (!a || !b) continue;
-        const s = scoreRelationship(a, b);
-        const relation = classifyRelationship(a, b);
-        const evidence = [JSON.stringify(computeStrengthFactors(a, b))];
-        const updatedEdge = { ...e, relation, strength: s, evidence };
-        fs.writeFileSync(p, JSON.stringify(updatedEdge, null, 2), "utf8");
-        updated++;
-      }
-      return {
-        content: [{ type: "text", text: JSON.stringify({ updated }, null, 2) }],
-      };
-    },
-  );
+
+
 
   server.tool(
     "kg_search",
@@ -868,78 +533,9 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  server.tool(
-    "kg_search_summary",
-    {
-      query: z.string().optional(),
-      tags: z.array(z.string()).optional(),
-      type: z.enum(KnowledgeNodeType).optional(),
-      limit: z.number().int().min(1).max(100).default(20),
-      summaryLength: z.number().int().min(1).max(2000).optional(),
-    },
-    async ({ query, tags, type, limit, summaryLength }) => {
-      warnDeprecated(
-        "kg_search_summary",
-        "Use kg_search with format=\"summary\" and optional summaryLength instead; this convenience tool will be removed in a future release.",
-      );
-      logToolCall("kg_search_summary", { query, tags, type, limit, summaryLength });
-      const all = storage.searchNodes({ query, tags, type, limit: 200 });
-      const now = Date.now();
-      const qVec = query ? embedText(query, EMBED_DIM) : undefined;
-      const baseTags = (tags ?? []).map((t) => t.toLowerCase());
-      const scored = all.map((n) => {
-        const sem = qVec ? cosineSimilarity(qVec, embedText(n.content, EMBED_DIM)) : 0;
-        const nTags = new Set(n.tags.map((t) => t.toLowerCase()));
-        let tagOverlap = 0;
-        if (baseTags.length > 0) for (const t of baseTags) if (nTags.has(t)) tagOverlap += 1;
-        if (baseTags.length > 0) tagOverlap /= baseTags.length;
-        const ageDays = Math.max(0, (now - Date.parse(n.updatedAt || n.createdAt)) / (1000 * 60 * 60 * 24));
-        const recency = Math.max(0, 1 - ageDays / 30);
-        const score = sem * 0.6 + tagOverlap * 0.25 + recency * 0.15;
-        return { node: n, score };
-      });
-      scored.sort((a, b) => b.score - a.score);
-      const nodes = scored.slice(0, limit).map((s) => s.node);
-      const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "summary", summaryLength }) } as const;
-      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
-    },
-  );
 
-  server.tool(
-    "kg_search_minimal",
-    {
-      query: z.string().optional(),
-      tags: z.array(z.string()).optional(),
-      type: z.enum(KnowledgeNodeType).optional(),
-      limit: z.number().int().min(1).max(100).default(20),
-    },
-    async ({ query, tags, type, limit }) => {
-      warnDeprecated(
-        "kg_search_minimal",
-        "Use kg_search with format=\"minimal\" instead; this convenience tool will be removed in a future release.",
-      );
-      logToolCall("kg_search_minimal", { query, tags, type, limit });
-      const all = storage.searchNodes({ query, tags, type, limit: 200 });
-      const now = Date.now();
-      const qVec = query ? embedText(query, EMBED_DIM) : undefined;
-      const baseTags = (tags ?? []).map((t) => t.toLowerCase());
-      const scored = all.map((n) => {
-        const sem = qVec ? cosineSimilarity(qVec, embedText(n.content, EMBED_DIM)) : 0;
-        const nTags = new Set(n.tags.map((t) => t.toLowerCase()));
-        let tagOverlap = 0;
-        if (baseTags.length > 0) for (const t of baseTags) if (nTags.has(t)) tagOverlap += 1;
-        if (baseTags.length > 0) tagOverlap /= baseTags.length;
-        const ageDays = Math.max(0, (now - Date.parse(n.updatedAt || n.createdAt)) / (1000 * 60 * 60 * 24));
-        const recency = Math.max(0, 1 - ageDays / 30);
-        const score = sem * 0.6 + tagOverlap * 0.25 + recency * 0.15;
-        return { node: n, score };
-      });
-      scored.sort((a, b) => b.score - a.score);
-      const nodes = scored.slice(0, limit).map((s) => s.node);
-      const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "minimal" }) } as const;
-      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
-    },
-  );
+
+
 
   server.tool(
     "kg_semantic_search",
@@ -1097,26 +693,7 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  // Expanded query: simple synonym expansion and unioned summary
-  server.tool("kg_query_context_expanded", { topic: z.string() }, async ({ topic }) => {
-    warnDeprecated(
-      "kg_query_context_expanded",
-      "Use kg_query_context; the expanded variant does not add value currently and will be removed in a future release.",
-    );
-    logToolCall("kg_query_context_expanded", { topic });
-    const nodes = storage.listAllNodes();
-    const base = reconstructContext(nodes, topic);
-    // Expand via tag co-occurrence for tag-like topics (non-breaking: we return base for now)
-    const tl = topic.toLowerCase().trim();
-    if (/^(proj:|ws:|ticket:)/.test(tl) || tl.split(/\s+/).length === 1) {
-      const _expanded = expandTags([tl], tagCo, 5);
-      void _expanded; // reserved for future merge strategy
-    }
-    return {
-      content: [{ type: "text", text: JSON.stringify(base, null, 2) }],
-      structuredContent: base,
-    };
-  });
+
 
   // Project state using proj:/ws:/ticket: tags and blocks edges
   server.tool(
@@ -1161,20 +738,73 @@ export function createPersonalKgServer(): McpServer {
     };
   });
 
-  // Dashboard-related logic removed per spec
+  // Generate attention alerts from dashboard data
+  function generateAttentionAlerts(dashboardResult: any): any[] {
+    const alerts = [];
+    const { metrics, timeline } = dashboardResult;
+    
+    // Rapid context switching alert
+    if (metrics.contextSwitches > 5) {
+      alerts.push({
+        type: 'rapid_switching',
+        severity: metrics.contextSwitches > 10 ? 'high' : 'medium',
+        message: `High fragmentation: ${metrics.contextSwitches} context switches detected`,
+        suggestion: 'Consider batching related tasks to reduce context switching',
+        affectedBranches: [...new Set(timeline.map((t: any) => t.branch))],
+        timeframe: 'recent'
+      });
+    }
+    
+    // Focus drift alert
+    if (metrics.focusDuration < 15) {
+      alerts.push({
+        type: 'focus_drift',
+        severity: 'medium',
+        message: `Low focus duration: average ${metrics.focusDuration} minutes per session`,
+        suggestion: 'Try to maintain focus on single tasks for longer periods',
+        affectedBranches: [...new Set(timeline.map((t: any) => t.branch))],
+        timeframe: 'recent'
+      });
+    }
+    
+    // Inactive branches alert
+    const activeBranches = new Set(timeline.map((t: any) => t.branch));
+    if (activeBranches.size > 3) {
+      alerts.push({
+        type: 'inactive_branch',
+        severity: 'low',
+        message: `Multiple active branches: ${activeBranches.size} branches in recent activity`,
+        suggestion: 'Consider consolidating work on fewer branches',
+        affectedBranches: Array.from(activeBranches),
+        timeframe: 'recent'
+      });
+    }
+    
+    return alerts;
+  }
 
-  // Session warmup: project context
+  // Enhanced session warmup aggregator: combines project state, recent activity, and workstream dashboard for comprehensive context
   server.tool(
     "kg_session_warmup",
-    "Start every session with this tool! Loads comprehensive context about your project including recent work, active questions, and blockers. Essential for maintaining continuity between work sessions.",
+    "Start every session with this tool! Loads comprehensive context about your project including recent work, active questions, blockers, and dashboard metrics. Essential for maintaining continuity between work sessions.",
     {
       project: z.string()
         .describe("Project name (will be normalized to 'proj:project-name' tag format)"),
+      workstream: z.string().optional()
+        .describe("Optional workstream within the project for more focused context"),
       limit: z.number().int().min(1).max(100).default(20)
         .describe("Number of recent nodes to include in the warmup context"),
+      includeDashboard: z.boolean().default(false)
+        .describe("Whether to include workstream dashboard data (timeline, metrics, context switches)"),
+      dashboardTimeWindow: z.enum(["1h", "8h", "24h", "week"]).default("24h")
+        .describe("Time window for dashboard data: '1h', '8h', '24h', or 'week'"),
+      dashboardFormat: z.enum(["timeline", "summary", "both"]).default("summary")
+        .describe("Dashboard output format: 'timeline' for chronological view, 'summary' for overview, 'both' for complete data"),
+      showAttentionAlerts: z.boolean().default(true)
+        .describe("Whether to show alerts about context switching, focus drift, and branch management"),
     },
-    async ({ project, limit }) => {
-      logToolCall("kg_session_warmup", { project, limit });
+    async ({ project, workstream, limit, includeDashboard, dashboardTimeWindow, dashboardFormat, showAttentionAlerts }) => {
+      logToolCall("kg_session_warmup", { project, workstream, limit, includeDashboard, dashboardTimeWindow, dashboardFormat, showAttentionAlerts });
 
       // Build project tag and gather all nodes
       const projTag = `proj:${project.trim().toLowerCase().replace(/\s+/g, "-")}`;
@@ -1224,8 +854,10 @@ export function createPersonalKgServer(): McpServer {
         .filter((n) => /\b(done|completed|finished|resolved)\b/i.test(n.content))
         .slice(0, 10);
 
+      // Enhanced payload with dashboard integration
       const payload: any = {
         project: projTag,
+        workstream,
         currentFocus,
         recentDecisions,
         activeQuestions,
@@ -1233,6 +865,44 @@ export function createPersonalKgServer(): McpServer {
         completedTasks,
         recent,
       };
+
+      // Include workstream dashboard data if requested
+      if (includeDashboard) {
+        try {
+          // Import the workstream dashboard service
+          const { WorkstreamDashboardService } = await import("./services/workstreamDashboard.js");
+          
+          // Create dashboard service instance
+          const dashboardService = new WorkstreamDashboardService(nodes);
+          
+          // Generate dashboard data
+          const dashboardResult = await dashboardService.generateDashboard({
+            timeWindow: dashboardTimeWindow,
+            showContextSwitches: true,
+            showMetrics: true,
+            maxEntries: 30,
+            outputFormat: dashboardFormat
+          });
+
+          // Add dashboard data to payload
+          payload.dashboard = {
+            timeWindow: dashboardTimeWindow,
+            timeline: dashboardResult.timeline.slice(0, 10), // Limit for warmup
+            metrics: dashboardResult.metrics,
+            formattedOutput: dashboardResult.formattedOutput
+          };
+
+          // Generate attention alerts if requested
+          if (showAttentionAlerts) {
+            const alerts = generateAttentionAlerts(dashboardResult);
+            payload.attentionAlerts = alerts;
+          }
+
+        } catch (error) {
+          console.warn("Failed to include dashboard in session warmup:", error);
+          payload.dashboard = { error: "Dashboard data unavailable" };
+        }
+      }
 
       return {
         content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
@@ -1242,32 +912,7 @@ export function createPersonalKgServer(): McpServer {
   );
 
   // Code-aware query: match by file path fragment and optional function name
-  server.tool(
-    "kg_query_code",
-    "Searches for knowledge related to specific code files or functions. Use to find decisions, insights, or progress related to particular code components.",
-    { 
-      filePath: z.string()
-        .describe("Path to the code file to search for (e.g., 'src/components/Button.tsx', 'api/auth.ts')"),
-      functionName: z.string().optional()
-        .describe("Optional function name to narrow the search scope")
-    },
-    async ({ filePath, functionName }) => {
-      logToolCall("kg_query_code", { filePath, functionName });
-      const fragment = filePath.split(/[\\/]/).slice(-2).join("/").toLowerCase();
-      const nodes = storage.listAllNodes();
-      const results = nodes.filter((n) => {
-        const hay = (n.content + "\n" + n.tags.join(" ")).toLowerCase();
-        const fileMatch = hay.includes(fragment) || hay.includes(filePath.toLowerCase());
-        const fnMatch = functionName ? hay.includes(functionName.toLowerCase()) : true;
-        return fileMatch && fnMatch;
-      });
-      const payload = { total: results.length, results: results.slice(0, 50) };
-      return {
-        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-        structuredContent: payload,
-      };
-    },
-  );
+
 
   // Connection path (BFS up to maxDepth)
   server.tool(
@@ -1329,19 +974,7 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  // Alias for compatibility: query_context
-  server.tool("query_context", { query: z.string() }, async ({ query }) => {
-    warnDeprecated(
-      "query_context",
-      "Use kg_query_context instead; this alias will be removed in a future release.",
-    );
-    logToolCall("query_context", { query });
-    const summary = reconstructContext(storage.listAllNodes(), query);
-    return {
-      content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
-      structuredContent: summary,
-    };
-  });
+
 
   server.tool(
     "kg_graph_export",
@@ -1447,7 +1080,7 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  // Workstream dashboard tool removed per spec
+
 
   return server;
 }

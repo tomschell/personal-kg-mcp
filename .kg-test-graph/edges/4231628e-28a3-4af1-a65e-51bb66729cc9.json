@@ -1,0 +1,8 @@
+{
+  "id": "4231628e-28a3-4af1-a65e-51bb66729cc9",
+  "fromNodeId": "0325aeea-f0c5-4f83-8789-4374385af86c",
+  "toNodeId": "21a930ce-bc20-499b-ab74-2adcf0766be1",
+  "relation": "relates_to",
+  "createdAt": "2025-08-14T19:06:16.213Z",
+  "strength": 0.5
+}
