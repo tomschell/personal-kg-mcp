@@ -112,30 +112,48 @@ export function createPersonalKgServer(): McpServer {
   }
 
   // Basic health tool
-  server.tool(PERSONAL_KG_TOOLS[0], {}, async () => {
-    logToolCall("kg_health");
-    const { result } = getHealth();
-    return { content: [{ type: "text", text: JSON.stringify(result) }] };
-  });
+  server.tool(
+    PERSONAL_KG_TOOLS[0],
+    "Provides system health status and diagnostic information about the Personal KG. Use to check if the knowledge graph is functioning properly, verify storage integrity, and get basic system metrics.",
+    {},
+    async () => {
+      logToolCall("kg_health");
+      const { result } = getHealth();
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    },
+  );
 
   // Minimal placeholder: capture node (spec-driven to be expanded)
 
   server.tool(
     PERSONAL_KG_TOOLS[1],
+    "Primary tool for capturing knowledge nodes. Use this to record decisions, progress updates, insights, questions, and ideas. Automatically creates relationships, normalizes tags, and links to sessions. This is your main entry point for adding knowledge to the graph.",
     {
-      content: z.string(),
-      type: z.enum(KnowledgeNodeType).default("idea"),
-      tags: z.array(z.string()).optional(),
-      visibility: z.enum(["private", "team", "public"]).optional(),
-      includeGit: z.boolean().default(false),
-      importance: z.enum(ImportanceLevel).default("medium"),
-      auto_link: z.boolean().default(true),
+      content: z.string()
+        .describe("The main content of the knowledge node. Be specific and include context. This is the primary information being captured."),
+      type: z.enum(KnowledgeNodeType).default("idea")
+        .describe("Type of knowledge node: 'idea' for thoughts/concepts, 'decision' for choices made, 'progress' for work updates, 'insight' for learnings/discoveries, 'question' for open questions, 'session' for session summaries."),
+      tags: z.array(z.string()).optional()
+        .describe("Free-form tags for categorization. Will be normalized (lowercase, dash-separated). Examples: 'frontend', 'api-design', 'bug-fix'."),
+      visibility: z.enum(["private", "team", "public"]).optional()
+        .describe("Visibility level: 'private' (only you), 'team' (shared with team), 'public' (fully public). Defaults to private."),
+      includeGit: z.boolean().default(false)
+        .describe("Whether to capture current Git context (branch, commit hash). Useful for linking knowledge to specific code states."),
+      importance: z.enum(ImportanceLevel).default("medium")
+        .describe("Importance level: 'high' for critical decisions/blockers, 'medium' for regular work, 'low' for minor notes."),
+      auto_link: z.boolean().default(true)
+        .describe("Whether to automatically create relationships to related nodes based on content similarity and tags."),
       // session grouping and tag normalization
-      sessionId: z.string().optional(),
-      link_to_session: z.boolean().default(true),
-      project: z.string().optional(),
-      workstream: z.string().optional(),
-      ticket: z.string().optional(),
+      sessionId: z.string().optional()
+        .describe("ID of a session node to link this capture to. Used for grouping related work within a session."),
+      link_to_session: z.boolean().default(true)
+        .describe("Whether to create a relationship to the specified session. Only applies if sessionId is provided."),
+      project: z.string().optional()
+        .describe("Project name for automatic tagging. Will be normalized and prefixed as 'proj:project-name'."),
+      workstream: z.string().optional()
+        .describe("Workstream name for automatic tagging. Will be normalized and prefixed as 'ws:workstream-name'."),
+      ticket: z.string().optional()
+        .describe("Ticket/issue ID for automatic tagging. Will be normalized and prefixed as 'ticket:123'."),
     },
     async (args) => {
       logToolCall("kg_capture", args);
@@ -338,13 +356,20 @@ export function createPersonalKgServer(): McpServer {
 
   server.tool(
     "kg_capture_session",
+    "Captures session summaries with structured metadata. Use at the end of work sessions to record what was accomplished, artifacts created, and next actions. Essential for maintaining context between sessions and tracking progress over time.",
     {
-      summary: z.string(),
-      duration: z.string().optional(),
-      artifacts: z.array(z.string()).optional(),
-      next_actions: z.array(z.string()).optional(),
-      visibility: z.enum(["private", "team", "public"]).optional(),
-      importance: z.enum(ImportanceLevel).default("medium"),
+      summary: z.string()
+        .describe("Concise summary of what was accomplished in this session. Focus on outcomes and key decisions."),
+      duration: z.string().optional()
+        .describe("How long the session lasted (e.g., '2 hours', '45 minutes'). Helps track time investment."),
+      artifacts: z.array(z.string()).optional()
+        .describe("List of deliverables created (e.g., ['Updated API docs', 'Fixed auth bug', 'Deployed v1.2'])"),
+      next_actions: z.array(z.string()).optional()
+        .describe("Specific tasks for next session. These become your starting context when you resume work."),
+      visibility: z.enum(["private", "team", "public"]).optional()
+        .describe("Visibility level for the session summary. Defaults to private."),
+      importance: z.enum(ImportanceLevel).default("medium")
+        .describe("Session importance: 'high' for major milestones, 'medium' for regular work, 'low' for minor sessions."),
     },
     async ({
       summary,
@@ -386,7 +411,13 @@ export function createPersonalKgServer(): McpServer {
   // Convenience: link a node to a session (session -> node, references)
   server.tool(
     "kg_link_session",
-    { sessionId: z.string(), nodeId: z.string() },
+    "Creates a relationship between a session node and another knowledge node. Use to explicitly link work items, decisions, or progress to a specific session for better organization.",
+    { 
+      sessionId: z.string()
+        .describe("ID of the session node to link from"),
+      nodeId: z.string()
+        .describe("ID of the knowledge node to link to the session")
+    },
     async ({ sessionId, nodeId }) => {
       logToolCall("kg_link_session", { sessionId, nodeId });
       const a = storage.getNode(sessionId);
@@ -440,13 +471,19 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  server.tool("kg_get_node", { id: z.string() }, async ({ id }) => {
-    logToolCall("kg_get_node", { id });
-    const node = storage.getNode(id);
-    return {
-      content: [{ type: "text", text: JSON.stringify({ node }, null, 2) }],
-    };
-  });
+  server.tool(
+    "kg_get_node",
+    "Retrieves a specific knowledge node by its unique ID. Use to fetch detailed information about a particular node including its content, metadata, tags, and relationships.",
+    { id: z.string()
+        .describe("Unique identifier of the knowledge node to retrieve") },
+    async ({ id }) => {
+      logToolCall("kg_get_node", { id });
+      const node = storage.getNode(id);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ node }, null, 2) }],
+      };
+    },
+  );
 
   server.tool(
     "kg_list_recent",
@@ -508,16 +545,20 @@ export function createPersonalKgServer(): McpServer {
 
   server.tool(
     "kg_create_edge",
+    "Creates explicit relationships between knowledge nodes. Use this to link related ideas, mark dependencies, or establish conceptual connections. Relationships are automatically scored for strength based on content similarity.",
     {
-      fromNodeId: z.string(),
-      toNodeId: z.string(),
+      fromNodeId: z.string()
+        .describe("ID of the source node (the node that references/blocks/derives from another)"),
+      toNodeId: z.string()
+        .describe("ID of the target node (the node being referenced/blocked/derived from)"),
       relation: z.enum([
         "references",
         "relates_to",
         "derived_from",
         "blocks",
         "duplicates",
-      ]),
+      ])
+        .describe("Type of relationship: 'references' for citations, 'relates_to' for general connections, 'derived_from' for ideas building on others, 'blocks' for dependencies, 'duplicates' for redundant content."),
     },
     async ({ fromNodeId, toNodeId, relation }) => {
       logToolCall("kg_create_edge", { fromNodeId, toNodeId, relation });
@@ -601,7 +642,11 @@ export function createPersonalKgServer(): McpServer {
 
   server.tool(
     "kg_list_edges",
-    { nodeId: z.string().optional() },
+    "Lists all relationships (edges) in the knowledge graph, optionally filtered by a specific node. Use to explore connections between knowledge nodes and understand the graph structure.",
+    { 
+      nodeId: z.string().optional()
+        .describe("Optional node ID to filter edges - if provided, shows only edges connected to this node")
+    },
     async ({ nodeId }) => {
       logToolCall("kg_list_edges", { nodeId });
       const edges = storage.listEdges(nodeId);
@@ -898,7 +943,11 @@ export function createPersonalKgServer(): McpServer {
 
   server.tool(
     "kg_semantic_search",
-    { query: z.string(), limit: z.number().int().min(1).max(50).default(10) },
+    "Performs AI-powered semantic search using vector similarity. Finds knowledge nodes based on meaning and context rather than exact keywords. Returns most conceptually similar results ranked by relevance.",
+    { query: z.string()
+        .describe("Natural language search query. Be descriptive - this uses AI to find semantically similar content, not just keyword matches."),
+      limit: z.number().int().min(1).max(50).default(10)
+        .describe("Maximum number of results to return. More results = broader coverage but less relevance.") },
     async ({ query, limit }) => {
       logToolCall("kg_semantic_search", { query, limit });
       const q = embedText(query, EMBED_DIM);
@@ -969,7 +1018,11 @@ export function createPersonalKgServer(): McpServer {
 
   server.tool(
     "kg_backup",
-    { retentionDays: z.number().int().min(0).max(365).default(30) },
+    "Creates a backup of the entire knowledge graph with configurable retention. Use for data protection and to maintain historical snapshots of your knowledge base.",
+    { 
+      retentionDays: z.number().int().min(0).max(365).default(30)
+        .describe("Number of days to keep backup files before automatic deletion (0 = keep forever)")
+    },
     async ({ retentionDays }) => {
       logToolCall("kg_backup", { retentionDays });
       const res = storage.backup(retentionDays);
@@ -979,24 +1032,38 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  server.tool("kg_validate", {}, async () => {
-    logToolCall("kg_validate");
-    const res = storage.validate();
-    return { content: [{ type: "text", text: JSON.stringify(res, null, 2) }] };
-  });
+  server.tool(
+    "kg_validate",
+    "Performs integrity validation on the knowledge graph data. Use to check for corrupted nodes, broken relationships, or other data consistency issues.",
+    {},
+    async () => {
+      logToolCall("kg_validate");
+      const res = storage.validate();
+      return { content: [{ type: "text", text: JSON.stringify(res, null, 2) }] };
+    },
+  );
 
-  server.tool("kg_repair", {}, async () => {
-    logToolCall("kg_repair");
-    const res = storage.repair();
-    return { content: [{ type: "text", text: JSON.stringify(res, null, 2) }] };
-  });
+  server.tool(
+    "kg_repair",
+    "Attempts to repair common data integrity issues in the knowledge graph. Use after validation to fix corrupted nodes or broken relationships automatically.",
+    {},
+    async () => {
+      logToolCall("kg_repair");
+      const res = storage.repair();
+      return { content: [{ type: "text", text: JSON.stringify(res, null, 2) }] };
+    },
+  );
 
   server.tool(
     "kg_query_time_range",
+    "Searches for knowledge nodes within a specific time period. Use to find work done during particular dates or to analyze activity patterns over time.",
     {
-      start: z.string().optional(),
-      end: z.string().optional(),
-      query: z.string().optional(),
+      start: z.string().optional()
+        .describe("Start date/time for the search range (e.g., '2024-01-01', '2 weeks ago')"),
+      end: z.string().optional()
+        .describe("End date/time for the search range (e.g., '2024-12-31', 'today')"),
+      query: z.string().optional()
+        .describe("Optional text query to filter nodes within the time range"),
     },
     async ({ start, end, query }) => {
       logToolCall("kg_query_time_range", { start, end, query });
@@ -1012,15 +1079,23 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  server.tool("kg_query_context", { topic: z.string() }, async ({ topic }) => {
-    logToolCall("kg_query_context", { topic });
-    const nodes = storage.listAllNodes();
-    const summary = reconstructContext(nodes, topic);
-    return {
-      content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
-      structuredContent: summary,
-    };
-  });
+  server.tool(
+    "kg_query_context",
+    "Reconstructs context around a specific topic by analyzing related knowledge nodes. Use to understand the full context and background of a particular subject area.",
+    { 
+      topic: z.string()
+        .describe("Topic or subject area to reconstruct context for (e.g., 'deployment', 'api-design', 'bug-fix')")
+    },
+    async ({ topic }) => {
+      logToolCall("kg_query_context", { topic });
+      const nodes = storage.listAllNodes();
+      const summary = reconstructContext(nodes, topic);
+      return {
+        content: [{ type: "text", text: JSON.stringify(summary, null, 2) }],
+        structuredContent: summary,
+      };
+    },
+  );
 
   // Expanded query: simple synonym expansion and unioned summary
   server.tool("kg_query_context_expanded", { topic: z.string() }, async ({ topic }) => {
@@ -1044,7 +1119,12 @@ export function createPersonalKgServer(): McpServer {
   });
 
   // Project state using proj:/ws:/ticket: tags and blocks edges
-  server.tool("kg_get_project_state", { project: z.string() }, async ({ project }) => {
+  server.tool(
+    "kg_get_project_state",
+    "Provides a comprehensive overview of a project's current state including active focus areas, recent decisions, open questions, blockers, and completed tasks. Perfect for project status checks and planning.",
+    { project: z.string()
+        .describe("Project name to analyze (will be normalized to 'proj:project-name' tag format)") },
+    async ({ project }) => {
     logToolCall("kg_get_project_state", { project });
     const projTag = `proj:${project.trim().toLowerCase().replace(/\s+/g, "-")}`;
     const nodes = storage.searchNodes({ tags: [projTag], limit: 200 });
@@ -1129,14 +1209,22 @@ export function createPersonalKgServer(): McpServer {
   // Enhanced session warmup aggregator: combines project state, recent activity, and workstream dashboard for comprehensive context
   server.tool(
     "kg_session_warmup",
+    "Start every session with this tool! Loads comprehensive context about your project including recent work, active questions, blockers, and dashboard metrics. Essential for maintaining continuity between work sessions.",
     {
-      project: z.string(),
-      workstream: z.string().optional(),
-      limit: z.number().int().min(1).max(100).default(20),
-      includeDashboard: z.boolean().default(false),
-      dashboardTimeWindow: z.enum(["1h", "8h", "24h", "week"]).default("24h"),
-      dashboardFormat: z.enum(["timeline", "summary", "both"]).default("summary"),
-      showAttentionAlerts: z.boolean().default(true),
+      project: z.string()
+        .describe("Project name (will be normalized to 'proj:project-name' tag format)"),
+      workstream: z.string().optional()
+        .describe("Optional workstream within the project for more focused context"),
+      limit: z.number().int().min(1).max(100).default(20)
+        .describe("Number of recent nodes to include in the warmup context"),
+      includeDashboard: z.boolean().default(false)
+        .describe("Whether to include workstream dashboard data (timeline, metrics, context switches)"),
+      dashboardTimeWindow: z.enum(["1h", "8h", "24h", "week"]).default("24h")
+        .describe("Time window for dashboard data: '1h', '8h', '24h', or 'week'"),
+      dashboardFormat: z.enum(["timeline", "summary", "both"]).default("summary")
+        .describe("Dashboard output format: 'timeline' for chronological view, 'summary' for overview, 'both' for complete data"),
+      showAttentionAlerts: z.boolean().default(true)
+        .describe("Whether to show alerts about context switching, focus drift, and branch management"),
     },
     async ({ project, workstream, limit, includeDashboard, dashboardTimeWindow, dashboardFormat, showAttentionAlerts }) => {
       logToolCall("kg_session_warmup", { project, workstream, limit, includeDashboard, dashboardTimeWindow, dashboardFormat, showAttentionAlerts });
@@ -1249,7 +1337,13 @@ export function createPersonalKgServer(): McpServer {
   // Code-aware query: match by file path fragment and optional function name
   server.tool(
     "kg_query_code",
-    { filePath: z.string(), functionName: z.string().optional() },
+    "Searches for knowledge related to specific code files or functions. Use to find decisions, insights, or progress related to particular code components.",
+    { 
+      filePath: z.string()
+        .describe("Path to the code file to search for (e.g., 'src/components/Button.tsx', 'api/auth.ts')"),
+      functionName: z.string().optional()
+        .describe("Optional function name to narrow the search scope")
+    },
     async ({ filePath, functionName }) => {
       logToolCall("kg_query_code", { filePath, functionName });
       const fragment = filePath.split(/[\\/]/).slice(-2).join("/").toLowerCase();
@@ -1271,7 +1365,15 @@ export function createPersonalKgServer(): McpServer {
   // Connection path (BFS up to maxDepth)
   server.tool(
     "kg_find_connection_path",
-    { startId: z.string(), endId: z.string(), maxDepth: z.number().int().min(1).max(6).default(4) },
+    "Finds the shortest path between two knowledge nodes through their relationships. Use to discover how different ideas or work items are connected in the knowledge graph.",
+    { 
+      startId: z.string()
+        .describe("ID of the starting knowledge node"),
+      endId: z.string()
+        .describe("ID of the target knowledge node to find path to"),
+      maxDepth: z.number().int().min(1).max(6).default(4)
+        .describe("Maximum number of relationship hops to search (higher = broader search but slower)")
+    },
     async ({ startId, endId, maxDepth }) => {
       logToolCall("kg_find_connection_path", { startId, endId, maxDepth });
       if (startId === endId)
@@ -1334,15 +1436,26 @@ export function createPersonalKgServer(): McpServer {
     };
   });
 
-  server.tool("kg_graph_export", {}, async () => {
-    logToolCall("kg_graph_export");
-    const g = buildGraphExport(storage);
-    return { content: [{ type: "text", text: JSON.stringify(g, null, 2) }] };
-  });
+  server.tool(
+    "kg_graph_export",
+    "Exports the complete knowledge graph structure for external analysis or visualization. Use to create backups, share knowledge graphs, or perform external analysis.",
+    {},
+    async () => {
+      logToolCall("kg_graph_export");
+      const g = buildGraphExport(storage);
+      return { content: [{ type: "text", text: JSON.stringify(g, null, 2) }] };
+    },
+  );
 
   server.tool(
     "kg_detect_topic_clusters",
-    { limit: z.number().int().min(1).max(10000).default(500), threshold: z.number().min(0).max(1).default(0.55) },
+    "Identifies groups of related knowledge nodes using similarity analysis. Use to discover themes, workstreams, or conceptual clusters in your knowledge base.",
+    { 
+      limit: z.number().int().min(1).max(10000).default(500)
+        .describe("Maximum number of nodes to analyze for clustering (higher = more comprehensive but slower)"),
+      threshold: z.number().min(0).max(1).default(0.55)
+        .describe("Similarity threshold for grouping nodes (higher = more strict clustering, lower = broader groups)")
+    },
     async ({ limit, threshold }) => {
       logToolCall("kg_detect_topic_clusters", { limit, threshold });
       const nodes = storage.listAllNodes().slice(0, limit);
@@ -1353,7 +1466,13 @@ export function createPersonalKgServer(): McpServer {
 
   server.tool(
     "kg_find_emerging_concepts",
-    { limit: z.number().int().min(1).max(10000).default(500), windowDays: z.number().int().min(1).max(90).default(7) },
+    "Identifies new or emerging topics based on recent activity patterns. Use to spot trends, new work areas, or evolving concepts in your knowledge base.",
+    { 
+      limit: z.number().int().min(1).max(10000).default(500)
+        .describe("Maximum number of nodes to analyze for emerging concepts"),
+      windowDays: z.number().int().min(1).max(90).default(7)
+        .describe("Time window in days to consider for 'recent' activity (higher = longer trend analysis)")
+    },
     async ({ limit, windowDays }) => {
       logToolCall("kg_find_emerging_concepts", { limit, windowDays });
       const nodes = storage.listAllNodes().slice(0, limit);
@@ -1362,31 +1481,50 @@ export function createPersonalKgServer(): McpServer {
     },
   );
 
-  server.tool("kg_export", {}, async () => {
-    logToolCall("kg_export");
-    const payload = storage.exportAll();
-    return {
-      content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-    };
-  });
+  server.tool(
+    "kg_export",
+    "Exports all knowledge graph data in a structured format. Use for backups, data migration, or external processing of your knowledge base.",
+    {},
+    async () => {
+      logToolCall("kg_export");
+      const payload = storage.exportAll();
+      return {
+        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+      };
+    },
+  );
 
-  server.tool("kg_import", { payload: z.string() }, async ({ payload }) => {
-    logToolCall("kg_import", { payload: `string(len=${payload.length})` });
-    const data = JSON.parse(payload);
-    const result = storage.importAll(data);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({ success: true, ...result }, null, 2),
-        },
-      ],
-    };
-  });
+  server.tool(
+    "kg_import",
+    "Imports knowledge graph data from a previously exported format. Use to restore backups, migrate data, or merge knowledge from different sources.",
+    { 
+      payload: z.string()
+        .describe("JSON string containing the exported knowledge graph data to import")
+    },
+    async ({ payload }) => {
+      logToolCall("kg_import", { payload: `string(len=${payload.length})` });
+      const data = JSON.parse(payload);
+      const result = storage.importAll(data);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ success: true, ...result }, null, 2),
+          },
+        ],
+      };
+    },
+  );
 
   server.tool(
     "kg_delete_node",
-    { id: z.string(), deleteEdges: z.boolean().default(true) },
+    "Removes a knowledge node and optionally its relationships from the graph. Use to clean up outdated, incorrect, or redundant information.",
+    { 
+      id: z.string()
+        .describe("ID of the knowledge node to delete"),
+      deleteEdges: z.boolean().default(true)
+        .describe("Whether to also delete all relationships connected to this node")
+    },
     async ({ id, deleteEdges }) => {
       logToolCall("kg_delete_node", { id, deleteEdges });
       const deleted = storage.deleteNode(id);
