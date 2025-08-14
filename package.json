@@ -6,8 +6,10 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx src/server.ts",
+    "dev:modular": "tsx src/server-modular.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "start:modular": "node dist/server-modular.js",
     "start:cjs": "node server.cjs",
     "test": "vitest run --config vitest.config.ts",
     "test:unit": "vitest run --config vitest.config.ts --reporter=verbose"
