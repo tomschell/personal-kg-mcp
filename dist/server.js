@@ -22,7 +22,7 @@ import { formatNodes } from "./utils/format.js";
 import { buildTagCooccurrence, expandTags } from "./utils/tagstats.js";
 import { clusterBySimilarity } from "./utils/clustering.js";
 import { findEmergingConcepts } from "./utils/emerging.js";
-import { WorkstreamDashboardService } from "./services/workstreamDashboard.js";
+// Workstream dashboard removed per spec
 export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"];
 export function createPersonalKgServer() {
     const server = new McpServer({ name: "personal-kg-mcp", version: "0.1.0" });
@@ -952,64 +952,15 @@ export function createPersonalKgServer() {
             structuredContent: payload,
         };
     });
-    // Generate attention alerts from dashboard data
-    function generateAttentionAlerts(dashboardResult) {
-        const alerts = [];
-        const { metrics, timeline } = dashboardResult;
-        // Rapid context switching alert
-        if (metrics.contextSwitches > 5) {
-            alerts.push({
-                type: 'rapid_switching',
-                severity: metrics.contextSwitches > 10 ? 'high' : 'medium',
-                message: `High fragmentation: ${metrics.contextSwitches} context switches detected`,
-                suggestion: 'Consider batching related tasks to reduce context switching',
-                affectedBranches: [...new Set(timeline.map((t) => t.branch))],
-                timeframe: 'recent'
-            });
-        }
-        // Focus drift alert
-        if (metrics.focusDuration < 15) {
-            alerts.push({
-                type: 'focus_drift',
-                severity: 'medium',
-                message: `Low focus duration: average ${metrics.focusDuration} minutes per session`,
-                suggestion: 'Try to maintain focus on single tasks for longer periods',
-                affectedBranches: [...new Set(timeline.map((t) => t.branch))],
-                timeframe: 'recent'
-            });
-        }
-        // Inactive branches alert
-        const activeBranches = new Set(timeline.map((t) => t.branch));
-        if (activeBranches.size > 3) {
-            alerts.push({
-                type: 'inactive_branch',
-                severity: 'low',
-                message: `Multiple active branches: ${activeBranches.size} branches in recent activity`,
-                suggestion: 'Consider consolidating work on fewer branches',
-                affectedBranches: Array.from(activeBranches),
-                timeframe: 'recent'
-            });
-        }
-        return alerts;
-    }
-    // Enhanced session warmup aggregator: combines project state, recent activity, and workstream dashboard for comprehensive context
-    server.tool("kg_session_warmup", "Start every session with this tool! Loads comprehensive context about your project including recent work, active questions, blockers, and dashboard metrics. Essential for maintaining continuity between work sessions.", {
+    // Dashboard-related logic removed per spec
+    // Session warmup: project context
+    server.tool("kg_session_warmup", "Start every session with this tool! Loads comprehensive context about your project including recent work, active questions, and blockers. Essential for maintaining continuity between work sessions.", {
         project: z.string()
             .describe("Project name (will be normalized to 'proj:project-name' tag format)"),
-        workstream: z.string().optional()
-            .describe("Optional workstream within the project for more focused context"),
         limit: z.number().int().min(1).max(100).default(20)
             .describe("Number of recent nodes to include in the warmup context"),
-        includeDashboard: z.boolean().default(false)
-            .describe("Whether to include workstream dashboard data (timeline, metrics, context switches)"),
-        dashboardTimeWindow: z.enum(["1h", "8h", "24h", "week"]).default("24h")
-            .describe("Time window for dashboard data: '1h', '8h', '24h', or 'week'"),
-        dashboardFormat: z.enum(["timeline", "summary", "both"]).default("summary")
-            .describe("Dashboard output format: 'timeline' for chronological view, 'summary' for overview, 'both' for complete data"),
-        showAttentionAlerts: z.boolean().default(true)
-            .describe("Whether to show alerts about context switching, focus drift, and branch management"),
-    }, async ({ project, workstream, limit, includeDashboard, dashboardTimeWindow, dashboardFormat, showAttentionAlerts }) => {
-        logToolCall("kg_session_warmup", { project, workstream, limit, includeDashboard, dashboardTimeWindow, dashboardFormat, showAttentionAlerts });
+    }, async ({ project, limit }) => {
+        logToolCall("kg_session_warmup", { project, limit });
         // Build project tag and gather all nodes
         const projTag = `proj:${project.trim().toLowerCase().replace(/\s+/g, "-")}`;
         const nodes = storage.listAllNodes();
@@ -1049,10 +1000,8 @@ export function createPersonalKgServer() {
         const completedTasks = projectNodes
             .filter((n) => /\b(done|completed|finished|resolved)\b/i.test(n.content))
             .slice(0, 10);
-        // Enhanced payload with dashboard integration
         const payload = {
             project: projTag,
-            workstream,
             currentFocus,
             recentDecisions,
             activeQuestions,
@@ -1060,39 +1009,6 @@ export function createPersonalKgServer() {
             completedTasks,
             recent,
         };
-        // Include workstream dashboard data if requested
-        if (includeDashboard) {
-            try {
-                // Import the workstream dashboard service
-                const { WorkstreamDashboardService } = await import("./services/workstreamDashboard.js");
-                // Create dashboard service instance
-                const dashboardService = new WorkstreamDashboardService(nodes);
-                // Generate dashboard data
-                const dashboardResult = await dashboardService.generateDashboard({
-                    timeWindow: dashboardTimeWindow,
-                    showContextSwitches: true,
-                    showMetrics: true,
-                    maxEntries: 30,
-                    outputFormat: dashboardFormat
-                });
-                // Add dashboard data to payload
-                payload.dashboard = {
-                    timeWindow: dashboardTimeWindow,
-                    timeline: dashboardResult.timeline.slice(0, 10), // Limit for warmup
-                    metrics: dashboardResult.metrics,
-                    formattedOutput: dashboardResult.formattedOutput
-                };
-                // Generate attention alerts if requested
-                if (showAttentionAlerts) {
-                    const alerts = generateAttentionAlerts(dashboardResult);
-                    payload.attentionAlerts = alerts;
-                }
-            }
-            catch (error) {
-                console.warn("Failed to include dashboard in session warmup:", error);
-                payload.dashboard = { error: "Dashboard data unavailable" };
-            }
-        }
         return {
             content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
             structuredContent: payload,
@@ -1256,45 +1172,7 @@ export function createPersonalKgServer() {
             ],
         };
     });
-    server.tool("kg_workstream_dashboard", {
-        timeWindow: z.enum(["1h", "8h", "24h", "week"]).default("24h"),
-        showContextSwitches: z.boolean().default(true),
-        showMetrics: z.boolean().default(true),
-        maxEntries: z.number().int().min(1).max(200).default(50),
-        outputFormat: z.enum(["timeline", "summary", "both"]).default("both"),
-    }, async ({ timeWindow, showContextSwitches, showMetrics, maxEntries, outputFormat }) => {
-        logToolCall("kg_workstream_dashboard", { timeWindow, showContextSwitches, showMetrics, maxEntries, outputFormat });
-        try {
-            const nodes = storage.listAllNodes();
-            const dashboardService = new WorkstreamDashboardService(nodes);
-            const result = await dashboardService.generateDashboard({
-                timeWindow,
-                showContextSwitches,
-                showMetrics,
-                maxEntries,
-                outputFormat,
-            });
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: result.formattedOutput,
-                    },
-                ],
-            };
-        }
-        catch (error) {
-            console.error("[PKG] Workstream dashboard error:", error);
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: `Error generating workstream dashboard: ${error instanceof Error ? error.message : String(error)}`,
-                    },
-                ],
-            };
-        }
-    });
+    // Workstream dashboard tool removed per spec
     return server;
 }
 async function main() {
