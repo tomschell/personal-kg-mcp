@@ -43,7 +43,7 @@ Use these when you need deeper context or discovery:
 | Topic queries | **kg_query_context** |
 | Get specific node | **kg_get_node** |
 | Find similar content | **kg_find_similar** |
-| Lightweight search | **kg_search** |
+| Lightweight search | **kg_search_summary** |
 
 **When to use**: Before starting work, when referencing specific decisions, or to avoid duplication.
 
@@ -78,13 +78,12 @@ Use these when you need deeper context or discovery:
 |------|------|-------|
 | **kg_create_edge** | **fromNodeId**, **toNodeId**, **relation**∈references\|relates_to\|derived_from\|blocks\|duplicates | Single relationship creation |
 | **kg_list_edges** | nodeId? | |
-| **kg_link_session** | **sessionId**, **nodeId** | Link a session to a node (session → node, references) |
 
 ### Search & Retrieval
 | Tool | Args | Notes |
 |------|------|-------|
 | **kg_semantic_search** | **query**, limit? | Vector similarity |
-| **kg_search** | query?, tags?, type?, limit?, format?, includeContent?, includeTags?, includeMetadata?, summaryLength? | Keyword/tag search with optional formatting |
+| **kg_search_summary** | query?, tags?, type?, limit?, summaryLength? | Keyword search with summaries |
 | **kg_list_recent** | limit, format?, summaryLength? | Recent activity |
 | **kg_get_node** | **id** | |
 | **kg_query_context** | **topic** | Summarise topic-relevant nodes |
@@ -178,7 +177,7 @@ These tools are available but rarely needed. Use only when you need specific fun
 - `kg_detect_topic_clusters` - Discover clusters/themes
 - `kg_find_emerging_concepts` - Detect new concepts over time
 - `kg_query_time_range` - Time-window queries
- 
+- `kg_query_code` - Code-aware queries
 - `kg_delete_node` - Delete nodes with edge cleanup
 
 ---
@@ -189,7 +188,7 @@ These tools will be removed in future releases:
 - `kg_mark_blocks`, `kg_mark_blocked_by`, `kg_mark_derived_from`, `kg_mark_affects` - Use `kg_create_edge` instead
 - `kg_rebuild_relationships`, `kg_prune_weak_relationships` - Use `kg_relationships_maintenance` instead
 - `capture_context`, `capture_session` - Use `kg_capture`, `kg_capture_session` instead
-- `kg_search_minimal` - Use `kg_search` or `kg_semantic_search` instead
+- `kg_search`, `kg_search_minimal` - Use `kg_search_summary` or `kg_semantic_search` instead
 - `kg_query_context_expanded` - Use `kg_query_context` instead
 - `kg_reclassify_relationships` - Use `kg_relationships_maintenance` instead
 

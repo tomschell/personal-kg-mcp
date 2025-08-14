@@ -1,8 +1,0 @@
-{
-  "id": "3313a619-0523-4c1b-b621-16a81b96266b",
-  "fromNodeId": "e10d47bd-2eb0-461c-a8fe-ffcf9e823843",
-  "toNodeId": "5ad52f44-d792-4b2e-b49c-e81d628a6243",
-  "relation": "relates_to",
-  "createdAt": "2025-08-11T16:38:49.777Z",
-  "strength": 0.5
-}
