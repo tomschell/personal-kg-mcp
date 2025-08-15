@@ -1,0 +1,13 @@
+# Ignore Personal KG test storage artifacts
+# Timestamped test storage dirs created by tests
+test-storage-*/
+
+# Local KG test scaffolding (if created in this package)
+.kg/
+.kg-test/
+.kg-test-*/
+.kg-test-capture/
+.kg-test-graph/
+.kg-test-sem/
+.kg-test-session/
+.kg-test-time/
