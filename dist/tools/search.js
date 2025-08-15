@@ -76,6 +76,21 @@ USE_ANN, EMBED_DIM, tagCo // TODO: Type this properly
             structuredContent: payload,
         };
     });
+    // Convenience aliases for summary/minimal formatting
+    server.tool("kg_list_recent_summary", { limit: z.number().int().min(1).max(100).default(20), summaryLength: z.number().int().min(1).max(2000).optional() }, async ({ limit, summaryLength }) => {
+        warnDeprecated("kg_list_recent_summary", "Use kg_list_recent with format=\"summary\" and optional summaryLength instead; this convenience tool will be removed in a future release.");
+        logToolCall("kg_list_recent_summary", { limit, summaryLength });
+        const nodes = storage.listRecent(limit);
+        const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "summary", summaryLength }) };
+        return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
+    });
+    server.tool("kg_list_recent_minimal", { limit: z.number().int().min(1).max(100).default(20) }, async ({ limit }) => {
+        warnDeprecated("kg_list_recent_minimal", "Use kg_list_recent with format=\"minimal\" instead; this convenience tool will be removed in a future release.");
+        logToolCall("kg_list_recent_minimal", { limit });
+        const nodes = storage.listRecent(limit);
+        const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "minimal" }) };
+        return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
+    });
     // Search nodes
     server.tool("kg_search", {
         query: z.string().optional(),
@@ -122,6 +137,71 @@ USE_ANN, EMBED_DIM, tagCo // TODO: Type this properly
             ],
             structuredContent: payload,
         };
+    });
+    server.tool("kg_search_summary", {
+        query: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        type: z.enum(KnowledgeNodeType).optional(),
+        limit: z.number().int().min(1).max(100).default(20),
+        summaryLength: z.number().int().min(1).max(2000).optional(),
+    }, async ({ query, tags, type, limit, summaryLength }) => {
+        warnDeprecated("kg_search_summary", "Use kg_search with format=\"summary\" and optional summaryLength instead; this convenience tool will be removed in a future release.");
+        logToolCall("kg_search_summary", { query, tags, type, limit, summaryLength });
+        const all = storage.searchNodes({ query, tags, type, limit: 200 });
+        const now = Date.now();
+        const qVec = query ? embedText(query, EMBED_DIM) : undefined;
+        const baseTags = (tags ?? []).map((t) => t.toLowerCase());
+        const scored = all.map((n) => {
+            const sem = qVec ? cosineSimilarity(qVec, embedText(n.content, EMBED_DIM)) : 0;
+            const nTags = new Set(n.tags.map((t) => t.toLowerCase()));
+            let tagOverlap = 0;
+            if (baseTags.length > 0)
+                for (const t of baseTags)
+                    if (nTags.has(t))
+                        tagOverlap += 1;
+            if (baseTags.length > 0)
+                tagOverlap /= baseTags.length;
+            const ageDays = Math.max(0, (now - Date.parse(n.updatedAt || n.createdAt)) / (1000 * 60 * 60 * 24));
+            const recency = Math.max(0, 1 - ageDays / 30);
+            const score = sem * 0.6 + tagOverlap * 0.25 + recency * 0.15;
+            return { node: n, score };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        const nodes = scored.slice(0, limit).map((s) => s.node);
+        const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "summary", summaryLength }) };
+        return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
+    });
+    server.tool("kg_search_minimal", {
+        query: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        type: z.enum(KnowledgeNodeType).optional(),
+        limit: z.number().int().min(1).max(100).default(20),
+    }, async ({ query, tags, type, limit }) => {
+        warnDeprecated("kg_search_minimal", "Use kg_search with format=\"minimal\" instead; this convenience tool will be removed in a future release.");
+        logToolCall("kg_search_minimal", { query, tags, type, limit });
+        const all = storage.searchNodes({ query, tags, type, limit: 200 });
+        const now = Date.now();
+        const qVec = query ? embedText(query, EMBED_DIM) : undefined;
+        const baseTags = (tags ?? []).map((t) => t.toLowerCase());
+        const scored = all.map((n) => {
+            const sem = qVec ? cosineSimilarity(qVec, embedText(n.content, EMBED_DIM)) : 0;
+            const nTags = new Set(n.tags.map((t) => t.toLowerCase()));
+            let tagOverlap = 0;
+            if (baseTags.length > 0)
+                for (const t of baseTags)
+                    if (nTags.has(t))
+                        tagOverlap += 1;
+            if (baseTags.length > 0)
+                tagOverlap /= baseTags.length;
+            const ageDays = Math.max(0, (now - Date.parse(n.updatedAt || n.createdAt)) / (1000 * 60 * 60 * 24));
+            const recency = Math.max(0, 1 - ageDays / 30);
+            const score = sem * 0.6 + tagOverlap * 0.25 + recency * 0.15;
+            return { node: n, score };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        const nodes = scored.slice(0, limit).map((s) => s.node);
+        const payload = { total: nodes.length, nodes: formatNodes(nodes, { format: "minimal" }) };
+        return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], structuredContent: payload };
     });
     // Semantic search
     server.tool("kg_semantic_search", "Performs AI-powered semantic search using vector similarity. Finds knowledge nodes based on meaning and context rather than exact keywords. Returns most conceptually similar results ranked by relevance.", { query: z.string()
