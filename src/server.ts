@@ -1,13 +1,9 @@
-// Personal KG MCP Server - Modular Architecture
-// This is the new modular server that uses the modular tool structure
-
 import { config } from "dotenv";
 config({ path: ".env" });
 config({ path: "../../.env" });
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-// Provide a CommonJS require in ESM context for hosts that expect it
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -17,17 +13,7 @@ import { FileStorage } from "./storage/FileStorage.js";
 import { AnnIndex } from "./utils/ann.js";
 import { embedText } from "./utils/embeddings.js";
 import { buildTagCooccurrence } from "./utils/tagstats.js";
-
-// Import modular tool setup functions
-import { setupCoreTools } from "./tools/core.js";
-import { setupSearchTools } from "./tools/search.js";
-import { setupRelationshipTools } from "./tools/relationships.js";
-import { setupMaintenanceTools } from "./tools/maintenance.js";
-import { setupAnalysisTools } from "./tools/analysis.js";
-import { setupProjectTools } from "./tools/project.js";
-import { setupDeprecatedTools } from "./tools/deprecated.js";
-
-export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
+import { setupAllTools } from "./tools/index.js";
 
 export function createPersonalKgServer(): McpServer {
   const server = new McpServer({ name: "personal-kg-mcp", version: "0.1.0" });
@@ -38,6 +24,7 @@ export function createPersonalKgServer(): McpServer {
   const USE_ANN = String(process.env.PKG_USE_ANN ?? "false").toLowerCase() === "true";
   const EMBED_DIM = 256;
   const ann = new AnnIndex(EMBED_DIM);
+  
   if (USE_ANN) {
     try {
       const all = storage.listAllNodes();
@@ -47,50 +34,69 @@ export function createPersonalKgServer(): McpServer {
       console.error(`[PKG] ANN index built for ${all.length} nodes`);
     } catch {}
   }
+  
   let tagCo = buildTagCooccurrence(storage.listAllNodes());
 
-  // Setup modular tools
-  setupCoreTools(server, storage, ann, USE_ANN, EMBED_DIM);
-  setupSearchTools(server, storage, ann, USE_ANN, EMBED_DIM, tagCo);
-  setupRelationshipTools(server, storage);
-  setupMaintenanceTools(server, storage);
-  setupAnalysisTools(server, storage);
-  setupProjectTools(server, storage);
-  setupDeprecatedTools(server, storage);
+  function normalizeTagString(s: string): string {
+    return s.trim().replace(/\s+/g, "-").toLowerCase();
+  }
+
+  function normalizeTags(
+    base: string[] | undefined,
+    project?: string,
+    workstream?: string,
+    ticket?: string,
+  ): string[] {
+    const set = new Set<string>();
+    for (const t of base ?? []) {
+      if (typeof t === "string" && t.trim().length > 0) set.add(normalizeTagString(t));
+    }
+    if (project && project.trim()) set.add(`proj:${normalizeTagString(project)}`);
+    if (workstream && workstream.trim()) set.add(`ws:${normalizeTagString(workstream)}`);
+    if (ticket && ticket.trim()) set.add(`ticket:${normalizeTagString(ticket)}`);
+    return Array.from(set);
+  }
+
+  function getWorkstreamTag(tags: string[]): string | undefined {
+    return tags.find((t) => t.toLowerCase().startsWith("ws:"));
+  }
+
+  function logToolCall(name: string, args?: unknown): void {
+    try {
+      const now = new Date().toISOString();
+      if (args && typeof args === "object") {
+        const keys = Object.keys(args as Record<string, unknown>);
+        const preview: Record<string, unknown> = {};
+        for (const k of keys) {
+          const v = (args as Record<string, unknown>)[k];
+          if (typeof v === "string" && v.length <= 120) {
+            preview[k] = v;
+          } else if (typeof v === "number" || typeof v === "boolean" || v == null) {
+            preview[k] = v as unknown;
+          } else if (Array.isArray(v)) {
+            preview[k] = `array(len=${v.length})`;
+          } else if (typeof v === "object") {
+            preview[k] = "object";
+          }
+        }
+        console.error(`[PKG] ${now} tool=${name} args=${JSON.stringify(preview)}`);
+      } else {
+        console.error(`[PKG] ${now} tool=${name}`);
+      }
+    } catch {
+      // ignore logging failures
+    }
+  }
+
+  // Setup all tools using modular architecture
+  setupAllTools(server, storage, ann, USE_ANN, EMBED_DIM, normalizeTags, getWorkstreamTag, logToolCall, tagCo);
 
   return server;
 }
 
-async function main() {
-  const server = createPersonalKgServer();
-  // Optional auto-backup scheduler controlled by env
-  const minutes = Number(process.env.PKG_AUTO_BACKUP_MINUTES ?? "0");
-  const retention = Number(process.env.PKG_BACKUP_RETENTION_DAYS ?? "30");
-  if (Number.isFinite(minutes) && minutes > 0) {
-    const storageForBackup = new FileStorage({
-      baseDir: process.env.PKG_STORAGE_DIR ?? ".kg",
-    });
-    setInterval(
-      () => {
-        try {
-          storageForBackup.backup(Number.isFinite(retention) ? retention : 30);
-        } catch {
-          // ignore scheduler errors
-        }
-      },
-      minutes * 60 * 1000,
-    );
-  }
-  await server.connect(new StdioServerTransport());
-}
-
+// Start the server if this file is run directly
 if (import.meta.url === `file://${process.argv[1]}`) {
-  // Run only when executed directly
-  // eslint-disable-next-line unicorn/prefer-top-level-await
-  main().catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
+  const server = createPersonalKgServer();
+  const transport = new StdioServerTransport();
+  server.connect(transport);
 }
-
-export type { McpServer };
