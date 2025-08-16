@@ -62,6 +62,8 @@ After Personal KG
 
 ## Quick Start
 
+npm install @tomschell/personal-kg-mcp
+
 ### Installation
 
 1. **Configure MCP Server** in `.cursor/mcp.json`:
