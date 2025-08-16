@@ -308,7 +308,7 @@ npm run dev
 - **Project Tools Module**: 3 project tools
 - **Deprecated Tools Module**: 6 deprecated tools
 - **Comprehensive Documentation**: Detailed architecture guide
-- **GitHub Repository**: Standalone repository at https://github.com/tomschell/personal-kg-mcp-v2
+- **GitHub Repository**: Standalone repository at https://github.com/tomschell/personal-kg-mcp
 - **CI/CD Pipeline**: GitHub Actions for testing, building, and deployment
 
 ### [1.0.0] - 2025-01-01
