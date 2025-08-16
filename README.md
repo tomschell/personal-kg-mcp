@@ -368,16 +368,7 @@ These tools are available but rarely needed:
 - `kg_query_time_range` - Time-window queries
 - `kg_delete_node` - Delete nodes with edge cleanup
 
-## Deprecated Tools (Avoid)
 
-These tools will be removed in future releases:
-
-- `kg_mark_blocks`, `kg_mark_blocked_by`, `kg_mark_derived_from`, `kg_mark_affects` - Use `kg_create_edge` instead
-- `kg_rebuild_relationships`, `kg_prune_weak_relationships` - Use `kg_relationships_maintenance` instead
-- `capture_context`, `capture_session` - Use `kg_capture`, `kg_capture_session` instead
-- `kg_search_minimal` - Use `kg_search` or `kg_semantic_search` instead
-- `kg_query_context_expanded` - Use `kg_query_context` instead
-- `kg_reclassify_relationships` - Use `kg_relationships_maintenance` instead
 
 ## Development
 
