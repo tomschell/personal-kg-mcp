@@ -1,6 +1,6 @@
 {
   "name": "@tomschell/personal-kg-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Personal Knowledge Graph MCP server for maintaining a local, private knowledge graph of decisions, progress, insights, and questions during development",
   "private": false,
   "type": "module",
@@ -66,5 +66,3 @@
     "node": ">=18.0.0"
   }
 }
-
-
