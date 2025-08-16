@@ -110,3 +110,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const transport = new StdioServerTransport();
   server.connect(transport);
 }
+
+// Export the server creation function as default
+export default createPersonalKgServer;
