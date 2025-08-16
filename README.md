@@ -16,12 +16,18 @@ As developers, we constantly make decisions, solve problems, and gain insights t
 - Debugging issues that resurface months later
 - Trying to remember "why we did it that way"
 
+**But the biggest challenge is agentic development**: AI assistants like Claude and Cursor start each session with zero context about your project history, decisions, and progress. Every conversation becomes a ground-up explanation, wasting time and losing valuable context.
+
 ### The Solution
 A Personal Knowledge Graph captures your development journey as it happens, creating a searchable, connected memory of your work. Think of it as a second brain that:
 - **Remembers everything** - Decisions, progress, insights, and questions
 - **Connects the dots** - Links related work across time and projects
 - **Provides context** - Gives you the full story when you need it
 - **Scales with you** - Grows more valuable over time
+
+**For agentic development, it's your AI assistant's memory**: The Personal KG gives AI tools like Claude and Cursor instant access to your project context, decisions, and progress history. No more starting from scratch every session.
+
+**It's effectively a communications layer** between you and your AI assistants, between different development sessions, and between team members. It bridges the gap between human context and AI capabilities.
 
 ### Key Benefits
 
@@ -34,6 +40,7 @@ A Personal Knowledge Graph captures your development journey as it happens, crea
 - Resume any project with full context
 - Understand the "why" behind past decisions
 - Pick up where you left off, even months later
+- **AI assistants start with full project context** - No more explaining your codebase from scratch
 
 #### 📈 **Accelerated Learning**
 - Build on past insights and avoid repeating mistakes
@@ -44,6 +51,8 @@ A Personal Knowledge Graph captures your development journey as it happens, crea
 - Share context with team members
 - Document decisions for future reference
 - Maintain institutional knowledge
+- **AI-human collaboration** - Your AI assistant understands your project as well as you do
+- **Communications bridge** - Seamless information flow between human context and AI capabilities
 
 #### 🎯 **Improved Decision Making**
 - Reference similar past situations
@@ -52,22 +61,27 @@ A Personal Knowledge Graph captures your development journey as it happens, crea
 
 ### Real-World Scenarios
 
-**Scenario 1: Returning to a Project**
+**Scenario 1: AI Assistant Session Continuity**
+> "I'm starting a new session with Claude to work on the authentication system. How do I avoid explaining the entire project history again?"
+
+**With Personal KG**: `kg_session_warmup({ project: "auth-system" })` gives your AI assistant instant context about recent decisions, blockers, and progress - no more ground-up explanations.
+
+**Scenario 2: Returning to a Project**
 > "I need to work on the authentication system again, but it's been 3 months. What was I thinking about the OAuth flow?"
 
 **With Personal KG**: `kg_session_warmup({ project: "auth-system" })` gives you recent decisions, blockers, and context in seconds.
 
-**Scenario 2: Debugging a Recurring Issue**
+**Scenario 3: Debugging a Recurring Issue**
 > "This database connection error feels familiar. Have I seen this before?"
 
 **With Personal KG**: `kg_semantic_search("database connection timeout")` finds related debugging sessions and solutions.
 
-**Scenario 3: Onboarding a New Developer**
+**Scenario 4: Onboarding a New Developer**
 > "I need to explain our architecture decisions to the new team member."
 
 **With Personal KG**: `kg_query_context("architecture decisions")` provides a comprehensive overview of key decisions and reasoning.
 
-**Scenario 4: Planning a Refactor**
+**Scenario 5: Planning a Refactor**
 > "I want to refactor this module, but I need to understand what depends on it."
 
 **With Personal KG**: `kg_get_project_state("module-refactor")` shows related work, dependencies, and potential impacts.
@@ -77,7 +91,7 @@ A Personal Knowledge Graph captures your development journey as it happens, crea
 The Personal KG integrates seamlessly with your existing development tools:
 
 #### **🔄 Daily Development Cycle**
-1. **Start work** → `kg_session_warmup()` gets you up to speed
+1. **Start work** → `kg_session_warmup()` gets you and your AI assistant up to speed
 2. **During coding** → `kg_capture()` records decisions and progress
 3. **Link related work** → `kg_create_edge()` connects related concepts
 4. **End session** → `kg_capture_session()` summarizes and plans next steps
@@ -87,6 +101,8 @@ The Personal KG integrates seamlessly with your existing development tools:
 - **GitHub Integration** - Automatically captures issue and PR context
 - **Local Storage** - Your data stays private and under your control
 - **Search & Discovery** - Find relevant information when you need it
+- **Session Continuity** - AI assistants maintain context across sessions
+- **Communications Layer** - Bridges human context and AI capabilities seamlessly
 
 #### **📊 Knowledge Growth**
 Your Personal KG becomes more valuable over time:
