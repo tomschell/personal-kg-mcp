@@ -146,12 +146,7 @@ npm install @tomschell/personal-kg-mcp
    - Add to `.env` file: `PKG_GITHUB_TOKEN=github_pat_your_token_here`
    - Or set as environment variable
 
-3. **Build the server**:
-```bash
-cd packages/personal-kg-mcp
-npm install
-npm run build
-```
+3. **Restart your MCP client** (Cursor, Claude Desktop, etc.)
 
 ### Basic Usage
 
