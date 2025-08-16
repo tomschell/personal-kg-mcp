@@ -1,16 +1,19 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setupProjectTools } from "../tools/project.js";
 import { FileStorage } from "../storage/FileStorage.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { rmSync } from "fs";
+import { join } from "path";
 
 describe("Project Tools", () => {
   let mockServer: McpServer;
   let storage: FileStorage;
   let registeredTools: Array<{ name: string; handler: Function }> = [];
+  let testDir: string;
 
   beforeEach(() => {
     // Reset storage with unique directory for each test
-    const testDir = `test-storage-${Date.now()}-${Math.random()}`;
+    testDir = `test-storage-${Date.now()}-${Math.random()}`;
     storage = new FileStorage({ baseDir: testDir });
     
     // Clear registered tools
@@ -598,5 +601,24 @@ describe("Project Tools", () => {
       expect(registeredNames).toContain("kg_delete_node");
       expect(registeredNames).toContain("kg_capture_session");
     });
+  });
+
+  afterEach(() => {
+    // Clean up test storage directories
+    if (testDir) {
+      try {
+        rmSync(testDir, { recursive: true, force: true });
+      } catch (error) {
+        // Ignore errors if directory doesn't exist or can't be removed
+        console.warn(`Failed to clean up test directory ${testDir}:`, error);
+      }
+    }
+    // Clean up test-storage-empty directory
+    try {
+      rmSync("test-storage-empty", { recursive: true, force: true });
+    } catch (error) {
+      // Ignore errors if directory doesn't exist or can't be removed
+      console.warn("Failed to clean up test-storage-empty directory:", error);
+    }
   });
 });

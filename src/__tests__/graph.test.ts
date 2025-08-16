@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { FileStorage } from "../storage/FileStorage.js";
 import { buildGraphExport } from "../utils/graph.js";
+import { rmSync } from "fs";
 
 describe("graph export", () => {
   it("exports nodes and edges", () => {
@@ -11,5 +12,15 @@ describe("graph export", () => {
     const g = buildGraphExport(s);
     expect(g.nodes.length).toBeGreaterThan(0);
     expect(g.edges.length).toBeGreaterThan(0);
+  });
+
+  afterEach(() => {
+    // Clean up test storage directory
+    try {
+      rmSync(".kg-test-graph", { recursive: true, force: true });
+    } catch (error) {
+      // Ignore errors if directory doesn't exist or can't be removed
+      console.warn("Failed to clean up .kg-test-graph directory:", error);
+    }
   });
 });
