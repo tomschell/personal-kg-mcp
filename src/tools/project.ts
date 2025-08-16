@@ -4,6 +4,172 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { FileStorage } from "../storage/FileStorage.js";
+import { getGitHubState, getCurrentBranch } from "../utils/github.js";
+import { isGitHubEnabled, getGitHubToken } from "../config/KGConfig.js";
+
+// Helper functions for discovery mode
+interface ProjectSummary {
+  name: string;
+  nodeCount: number;
+  lastActivity: string;
+  recentWork: string[];
+  status: "very-active" | "moderate" | "light" | "inactive";
+}
+
+interface RecentActivity {
+  project: string;
+  content: string;
+  timestamp: string;
+  type: string;
+}
+
+async function getAvailableProjects(storage: FileStorage): Promise<ProjectSummary[]> {
+  const allNodes = storage.searchNodes({ limit: 1000 }); // Get all nodes for analysis
+  
+  // Extract all project tags
+  const projectTags = new Set<string>();
+  for (const node of allNodes) {
+    for (const tag of node.tags) {
+      if (tag.startsWith('proj:')) {
+        projectTags.add(tag);
+      }
+    }
+  }
+  
+  // Get activity stats for each project
+  const projects: ProjectSummary[] = [];
+  for (const projectTag of projectTags) {
+    const projectName = projectTag.replace('proj:', '');
+    const projectNodes = storage.searchNodes({ tags: [projectTag], limit: 100 });
+    
+    if (projectNodes.length === 0) continue;
+    
+    // Get recent work (last 3 items)
+    const recentWork = projectNodes
+      .slice(0, 3)
+      .map(node => {
+        const content = node.content.length > 100 
+          ? node.content.substring(0, 100) + '...' 
+          : node.content;
+        return content;
+      });
+    
+    // Determine activity status based on last activity and node count
+    const lastActivity = projectNodes[0]?.updatedAt || new Date().toISOString();
+    const hoursSinceActivity = (Date.now() - new Date(lastActivity).getTime()) / (1000 * 60 * 60);
+    
+    let status: ProjectSummary['status'];
+    if (hoursSinceActivity < 24 && projectNodes.length > 20) {
+      status = 'very-active';
+    } else if (hoursSinceActivity < 72 && projectNodes.length > 10) {
+      status = 'moderate';
+    } else if (hoursSinceActivity < 168 && projectNodes.length > 5) {
+      status = 'light';
+    } else {
+      status = 'inactive';
+    }
+    
+    projects.push({
+      name: projectName,
+      nodeCount: projectNodes.length,
+      lastActivity,
+      recentWork,
+      status
+    });
+  }
+  
+  // Sort by activity (most recent first)
+  return projects.sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime());
+}
+
+async function getCrossProjectActivity(storage: FileStorage, limit: number = 10): Promise<RecentActivity[]> {
+  const recentNodes = storage.searchNodes({ limit });
+  
+  return recentNodes.map(node => {
+    const projectTag = node.tags.find(tag => tag.startsWith('proj:'));
+    const project = projectTag ? projectTag.replace('proj:', '') : 'unknown';
+    
+    return {
+      project,
+      content: node.content.length > 80 ? node.content.substring(0, 80) + '...' : node.content,
+      timestamp: node.updatedAt,
+      type: node.type
+    };
+  });
+}
+
+async function handleDiscoveryMode(storage: FileStorage, limit: number) {
+  const allNodes = storage.searchNodes({ limit: 1000 });
+  
+  // Check if knowledge graph is empty
+  if (allNodes.length === 0) {
+    const emptyResponse = {
+      mode: "discovery",
+      status: "empty",
+      message: "🚀 SESSION WARMUP - GETTING STARTED",
+      knowledgeGraph: "Empty (ready to capture your work!)",
+      quickStart: [
+        "1. kg_capture(content=\"Working on...\", project=\"your-project\") - Start documenting",
+        "2. kg_session_warmup(discover=true) - Explore once you have data",
+        "3. kg_session_warmup(project=\"project-name\") - Get focused context"
+      ],
+      tip: "The knowledge graph builds context as you capture decisions, progress, and insights!"
+    };
+    
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(emptyResponse, null, 2),
+        },
+      ],
+    };
+  }
+  
+  // Get project information
+  const projects = await getAvailableProjects(storage);
+  const recentActivity = await getCrossProjectActivity(storage, 10);
+  
+  // Get emerging concepts (tags that appear across multiple projects)
+  const tagCounts = new Map<string, number>();
+  for (const node of allNodes) {
+    for (const tag of node.tags) {
+      if (!tag.startsWith('proj:') && !tag.startsWith('ws:')) {
+        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+      }
+    }
+  }
+  
+  const emergingConcepts = Array.from(tagCounts.entries())
+    .filter(([_, count]) => count >= 3) // At least 3 occurrences
+    .sort(([_, a], [__, b]) => b - a)
+    .slice(0, 5)
+    .map(([tag, count]) => ({ tag, count }));
+  
+  const discoveryResponse = {
+    mode: "discovery",
+    status: "active",
+    message: "🔍 PROJECT DISCOVERY",
+    availableProjects: projects,
+    recentActivity,
+    emergingConcepts,
+    nextSteps: [
+      `Use kg_session_warmup(project="${projects[0]?.name || 'your-project'}") for detailed project context`,
+      "Use kg_capture() to start documenting new work",
+      "Use kg_session_warmup(discover=true) to explore again"
+    ],
+    sessionStart: new Date().toISOString()
+  };
+  
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(discoveryResponse, null, 2),
+      },
+    ],
+  };
+}
 
 // Helper functions
 function logToolCall(name: string, args?: unknown): void {
@@ -77,13 +243,23 @@ export function setupProjectTools(
     "kg_session_warmup",
     "Start every session with this tool! Loads comprehensive context about your project including recent work, active questions, and blockers. Essential for maintaining continuity between work sessions.",
     {
-      project: z.string().describe("Project name (will be normalized to 'proj:project-name' tag format)"),
+      project: z.string().optional().describe("Project name (will be normalized to 'proj:project-name' tag format). Optional - if not provided, discovery mode is enabled."),
       workstream: z.string().optional().describe("Optional workstream within the project for more focused context"),
       limit: z.number().int().min(1).max(100).default(20).describe("Number of recent nodes to include in the warmup context"),
+      discover: z.boolean().default(false).describe("Enable discovery mode to explore available projects and recent activity. Automatically enabled if no project specified."),
     },
-    async ({ project, workstream, limit }) => {
-      logToolCall("kg_session_warmup", { project, workstream, limit });
-      const projectTag = `proj:${project.toLowerCase().replace(/\s+/g, "-")}`;
+    async ({ project, workstream, limit, discover }) => {
+      logToolCall("kg_session_warmup", { project, workstream, limit, discover });
+      
+      // Enable discovery mode if no project specified or discover=true
+      const shouldDiscover = !project || discover;
+      
+      if (shouldDiscover) {
+        return await handleDiscoveryMode(storage, limit);
+      }
+      
+      // Original project-specific warmup logic
+      const projectTag = `proj:${project!.toLowerCase().replace(/\s+/g, "-")}`;
       const tags = [projectTag];
       if (workstream) {
         tags.push(`ws:${workstream.toLowerCase().replace(/\s+/g, "-")}`);
@@ -93,13 +269,35 @@ export function setupProjectTools(
       const questions = storage.searchNodes({ tags, type: "question", limit: 5 });
       const blockers = storage.searchNodes({ tags: [...tags, "blocker"], limit: 5 });
       
+      // Get GitHub state integration (configurable)
+      let githubState = null;
+      let warnings: any[] = [];
+      
+      if (isGitHubEnabled()) {
+        const currentBranch = getCurrentBranch();
+        githubState = getGitHubState(currentBranch, recentNodes);
+      }
+      
       const warmup = {
         project,
         workstream,
         recentWork: recentNodes.slice(0, limit),
         openQuestions: questions,
         blockers,
-        sessionStart: new Date().toISOString()
+        sessionStart: new Date().toISOString(),
+        // NEW: GitHub state integration
+        githubState,
+        // NEW: Workflow reminders for commit frequency
+        workflowReminders: {
+          commitFrequency: [
+            "🔄 Commit frequently - git hooks provide valuable feedback during development",
+            "💡 Target: Commit after each logical change, not just at completion",
+            "🎯 Use descriptive messages: 'Add validation logic for #310'",
+            "⚡ Git hooks run on commit - frequent commits = early problem detection",
+            "📋 Include issue numbers in commit messages for tracking and automation"
+          ],
+          currentIssueGuidance: "Remember to reference issue numbers in commit messages for tracking"
+        }
       };
       
       return {

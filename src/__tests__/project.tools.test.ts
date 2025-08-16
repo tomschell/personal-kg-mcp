@@ -204,6 +204,99 @@ describe("Project Tools", () => {
       const data = JSON.parse(result.content[0].text);
       expect(data.recentWork).toHaveLength(20); // Default limit is 20
     });
+
+    // NEW: Discovery mode tests
+    it('should enable discovery mode when no project specified', async () => {
+      const tool = registeredTools.find(t => t.name === "kg_session_warmup");
+      const result = await tool!.handler({
+        limit: 10,
+      });
+
+      expect(result.content[0].text).toBeDefined();
+      const data = JSON.parse(result.content[0].text);
+      expect(data.mode).toBe('discovery');
+      // Status can be either 'active' or 'empty' depending on test data
+      expect(['active', 'empty']).toContain(data.status);
+      if (data.status === 'active') {
+        expect(data.message).toBe('🔍 PROJECT DISCOVERY');
+        expect(data.availableProjects).toBeDefined();
+        expect(data.recentActivity).toBeDefined();
+        expect(data.emergingConcepts).toBeDefined();
+        expect(data.nextSteps).toBeDefined();
+      } else {
+        expect(data.message).toBe('🚀 SESSION WARMUP - GETTING STARTED');
+        expect(data.knowledgeGraph).toBe('Empty (ready to capture your work!)');
+        expect(data.quickStart).toBeDefined();
+        expect(data.tip).toBeDefined();
+      }
+    });
+
+    it('should enable discovery mode when discover=true', async () => {
+      const tool = registeredTools.find(t => t.name === "kg_session_warmup");
+      const result = await tool!.handler({
+        project: 'test-project',
+        discover: true,
+        limit: 10,
+      });
+
+      expect(result.content[0].text).toBeDefined();
+      const data = JSON.parse(result.content[0].text);
+      expect(data.mode).toBe('discovery');
+      // Status can be either 'active' or 'empty' depending on test data
+      expect(['active', 'empty']).toContain(data.status);
+      if (data.status === 'active') {
+        expect(data.message).toBe('🔍 PROJECT DISCOVERY');
+      } else {
+        expect(data.message).toBe('🚀 SESSION WARMUP - GETTING STARTED');
+      }
+    });
+
+    it('should handle empty knowledge graph in discovery mode', async () => {
+      // Create a temporary storage with no nodes
+      const emptyStorage = new FileStorage({ baseDir: 'test-storage-empty' });
+      const emptyServer = {
+        tool: vi.fn((name: string, description: string, schema: any, handler: Function) => {
+          registeredTools.push({ name, handler });
+        }),
+      } as unknown as McpServer;
+
+      // Mock the storage to return empty results
+      vi.spyOn(emptyStorage, 'searchNodes').mockReturnValue([]);
+      
+      setupProjectTools(emptyServer, emptyStorage);
+
+      const tool = registeredTools.find(t => t.name === "kg_session_warmup");
+      const result = await tool!.handler({
+        limit: 10,
+      });
+
+      expect(result.content[0].text).toBeDefined();
+      const data = JSON.parse(result.content[0].text);
+      expect(data.mode).toBe('discovery');
+      expect(data.status).toBe('empty');
+      expect(data.message).toBe('🚀 SESSION WARMUP - GETTING STARTED');
+      expect(data.knowledgeGraph).toBe('Empty (ready to capture your work!)');
+      expect(data.quickStart).toBeDefined();
+      expect(data.tip).toBeDefined();
+    });
+
+    it('should maintain backward compatibility with project-specific mode', async () => {
+      const tool = registeredTools.find(t => t.name === "kg_session_warmup");
+      const result = await tool!.handler({
+        project: 'test-project',
+        discover: false,
+        limit: 10,
+      });
+
+      expect(result.content[0].text).toBeDefined();
+      const data = JSON.parse(result.content[0].text);
+      expect(data.project).toBe('test-project');
+      expect(data.recentWork).toBeDefined();
+      expect(data.openQuestions).toBeDefined();
+      expect(data.blockers).toBeDefined();
+      expect(data.githubState).toBeDefined();
+      expect(data.workflowReminders).toBeDefined();
+    });
   });
 
   describe("kg_get_node", () => {

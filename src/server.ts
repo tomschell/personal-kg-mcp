@@ -14,11 +14,21 @@ import { AnnIndex } from "./utils/ann.js";
 import { embedText } from "./utils/embeddings.js";
 import { buildTagCooccurrence } from "./utils/tagstats.js";
 import { setupAllTools } from "./tools/index.js";
+import { getStoragePath, validateConfig } from "./config/KGConfig.js";
 
 export function createPersonalKgServer(): McpServer {
   const server = new McpServer({ name: "personal-kg-mcp", version: "0.1.0" });
+  
+  // Load configuration and validate
+  const storagePath = getStoragePath();
+  const configIssues = validateConfig();
+  
+  if (configIssues.length > 0) {
+    console.error('[PKG] Configuration issues found:', configIssues);
+  }
+  
   const storage = new FileStorage({
-    baseDir: process.env.PKG_STORAGE_DIR ?? ".kg",
+    baseDir: storagePath,
   });
 
   const USE_ANN = String(process.env.PKG_USE_ANN ?? "false").toLowerCase() === "true";
