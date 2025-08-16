@@ -45,12 +45,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tomschell/personal-kg-mcp-v2.git"
+    "url": "https://github.com/tomschell/personal-kg-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/tomschell/personal-kg-mcp-v2/issues"
+    "url": "https://github.com/tomschell/personal-kg-mcp/issues"
   },
-  "homepage": "https://github.com/tomschell/personal-kg-mcp-v2#readme",
+  "homepage": "https://github.com/tomschell/personal-kg-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.16.0",
     "dotenv": "^16.4.5",
