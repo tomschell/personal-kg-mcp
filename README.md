@@ -6,6 +6,95 @@ A Model Context Protocol (MCP) server for maintaining a local, private knowledge
 
 The Personal KG MCP server provides tools to capture, search, and manage knowledge during development work. It focuses on essential functionality to reduce cognitive load while maintaining a comprehensive knowledge base.
 
+## Why Personal Knowledge Graph?
+
+### The Problem
+As developers, we constantly make decisions, solve problems, and gain insights that get lost in the noise of daily work. Important context disappears when:
+- Switching between projects or tasks
+- Returning to code after time away
+- Onboarding new team members
+- Debugging issues that resurface months later
+- Trying to remember "why we did it that way"
+
+### The Solution
+A Personal Knowledge Graph captures your development journey as it happens, creating a searchable, connected memory of your work. Think of it as a second brain that:
+- **Remembers everything** - Decisions, progress, insights, and questions
+- **Connects the dots** - Links related work across time and projects
+- **Provides context** - Gives you the full story when you need it
+- **Scales with you** - Grows more valuable over time
+
+### Key Benefits
+
+#### 🧠 **Reduced Cognitive Load**
+- Stop trying to remember everything
+- Focus on current work, not context switching
+- Quick access to relevant background information
+
+#### 🔄 **Seamless Context Switching**
+- Resume any project with full context
+- Understand the "why" behind past decisions
+- Pick up where you left off, even months later
+
+#### 📈 **Accelerated Learning**
+- Build on past insights and avoid repeating mistakes
+- Track your problem-solving patterns
+- Identify recurring challenges and solutions
+
+#### 🤝 **Better Collaboration**
+- Share context with team members
+- Document decisions for future reference
+- Maintain institutional knowledge
+
+#### 🎯 **Improved Decision Making**
+- Reference similar past situations
+- Understand the full impact of decisions
+- Track the evolution of your thinking
+
+### Real-World Scenarios
+
+**Scenario 1: Returning to a Project**
+> "I need to work on the authentication system again, but it's been 3 months. What was I thinking about the OAuth flow?"
+
+**With Personal KG**: `kg_session_warmup({ project: "auth-system" })` gives you recent decisions, blockers, and context in seconds.
+
+**Scenario 2: Debugging a Recurring Issue**
+> "This database connection error feels familiar. Have I seen this before?"
+
+**With Personal KG**: `kg_semantic_search("database connection timeout")` finds related debugging sessions and solutions.
+
+**Scenario 3: Onboarding a New Developer**
+> "I need to explain our architecture decisions to the new team member."
+
+**With Personal KG**: `kg_query_context("architecture decisions")` provides a comprehensive overview of key decisions and reasoning.
+
+**Scenario 4: Planning a Refactor**
+> "I want to refactor this module, but I need to understand what depends on it."
+
+**With Personal KG**: `kg_get_project_state("module-refactor")` shows related work, dependencies, and potential impacts.
+
+### How It Fits Your Workflow
+
+The Personal KG integrates seamlessly with your existing development tools:
+
+#### **🔄 Daily Development Cycle**
+1. **Start work** → `kg_session_warmup()` gets you up to speed
+2. **During coding** → `kg_capture()` records decisions and progress
+3. **Link related work** → `kg_create_edge()` connects related concepts
+4. **End session** → `kg_capture_session()` summarizes and plans next steps
+
+#### **🛠️ Tool Integration**
+- **MCP Protocol** - Works with Claude, Cursor, and other AI assistants
+- **GitHub Integration** - Automatically captures issue and PR context
+- **Local Storage** - Your data stays private and under your control
+- **Search & Discovery** - Find relevant information when you need it
+
+#### **📊 Knowledge Growth**
+Your Personal KG becomes more valuable over time:
+- **Week 1**: Basic decision tracking
+- **Month 1**: Pattern recognition and context building
+- **Month 6**: Comprehensive project history and insights
+- **Year 1**: Institutional knowledge and learning acceleration
+
 ## Quick Start
 
 ### Installation
