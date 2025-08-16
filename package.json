@@ -1,17 +1,56 @@
 {
-  "name": "personal-kg-mcp",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@tomschell/personal-kg-mcp",
+  "version": "1.0.0",
+  "description": "Personal Knowledge Graph MCP server for maintaining a local, private knowledge graph of decisions, progress, insights, and questions during development",
+  "private": false,
   "type": "module",
   "main": "dist/server.js",
+  "module": "dist/server.js",
+  "types": "dist/server.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/server.js",
+      "types": "./dist/server.d.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "restricted"
+  },
   "scripts": {
     "dev": "tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "start:cjs": "node server.cjs",
     "test": "vitest run --config vitest.config.ts",
-    "test:unit": "vitest run --config vitest.config.ts --reporter=verbose"
+    "test:unit": "vitest run --config vitest.config.ts --reporter=verbose",
+    "prepublishOnly": "npm run build && npm test",
+    "publish:patch": "npm version patch && npm publish",
+    "publish:minor": "npm version minor && npm publish",
+    "publish:major": "npm version major && npm publish"
   },
+  "keywords": [
+    "mcp",
+    "knowledge-graph",
+    "personal-knowledge",
+    "model-context-protocol",
+    "ai",
+    "development-tools"
+  ],
+  "author": "Thomas Schell",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tomschell/personal-kg-mcp-v2.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tomschell/personal-kg-mcp-v2/issues"
+  },
+  "homepage": "https://github.com/tomschell/personal-kg-mcp-v2#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.16.0",
     "dotenv": "^16.4.5",
@@ -22,6 +61,9 @@
     "tsx": "^4.20.3",
     "typescript": "^5.5.4",
     "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
 
