@@ -6,7 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { FileStorage } from "../storage/FileStorage.js";
 import { KnowledgeNodeType } from "../types/enums.js";
 import { formatNodes, type FormatOptions } from "../utils/format.js";
-import { embedText, cosineSimilarity } from "../utils/embeddings.js";
+import { embedText, cosineSimilarity, tokenize } from "../utils/embeddings.js";
 import { reconstructContext } from "../utils/context.js";
 import { expandTags } from "../utils/tagstats.js";
 
@@ -103,31 +103,79 @@ export function setupSearchTools(
     { query: z.string()
         .describe("Natural language search query. Be descriptive - this uses AI to find semantically similar content, not just keyword matches."),
       limit: z.number().int().min(1).max(50).default(10)
-        .describe("Maximum number of results to return. More results = broader coverage but less relevance.") },
-    async ({ query, limit }) => {
-      logToolCall("kg_semantic_search", { query, limit });
+        .describe("Maximum number of results to return. More results = broader coverage but less relevance."),
+      threshold: z.number().min(0).max(1).default(0.15).optional()
+        .describe("Minimum similarity score (0-1) for results. Higher = more strict. Default: 0.15"),
+      hybridMode: z.boolean().default(false).optional()
+        .describe("Enable hybrid search combining semantic similarity with tag matching and term presence. Default: false") },
+    async ({ query, limit, threshold = 0.15, hybridMode = false }) => {
+      logToolCall("kg_semantic_search", { query, limit, threshold, hybridMode });
       const q = embedText(query, EMBED_DIM);
+
+      // Extract query tokens for hybrid search
+      const queryTokens = hybridMode ? new Set(tokenize(query)) : null;
+
       let results: Array<{ id: string; score: number; snippet: string }> = [];
-      if (USE_ANN) {
+      if (USE_ANN && !hybridMode) {
+        // ANN path - only for pure semantic search
         const top = ann.search(q, limit * 3);
         const nodesById = new Map(storage.listAllNodes().map((n) => [n.id, n] as const));
         results = top
           .map(({ id, score }: { id: string; score: number }) => ({ id, score, node: nodesById.get(id) }))
-          .filter((r: { id: string; score: number; node: any }) => r.node)
+          .filter((r: { id: string; score: number; node: any }) => r.node && r.score >= threshold)
           .slice(0, limit)
           .map((r: { id: string; score: number; node: any }) => ({ id: r.id, score: r.score, snippet: r.node!.content.slice(0, 160) }));
       } else {
         const nodes = storage.listAllNodes();
-        const scored = nodes.map((n) => ({
-          node: n,
-          score: cosineSimilarity(q, embedText(n.content, EMBED_DIM)),
-        }));
+        const scored = nodes.map((n) => {
+          const semScore = cosineSimilarity(q, embedText(n.content, EMBED_DIM));
+
+          if (!hybridMode || !queryTokens) {
+            // Pure semantic search
+            return { node: n, score: semScore };
+          }
+
+          // Hybrid search: combine semantic + tag matching + term presence
+
+          // Tag matching: check if any node tags match query tokens
+          const nodeTags = new Set(n.tags.map(t => t.toLowerCase()));
+          let tagMatchScore = 0;
+          for (const token of queryTokens) {
+            if (nodeTags.has(token)) {
+              tagMatchScore += 1;
+            }
+          }
+          if (queryTokens.size > 0) {
+            tagMatchScore /= queryTokens.size;
+          }
+
+          // Term presence: check if query tokens appear in content
+          const contentTokens = new Set(tokenize(n.content));
+          let termPresenceScore = 0;
+          for (const token of queryTokens) {
+            if (contentTokens.has(token)) {
+              termPresenceScore += 1;
+            }
+          }
+          if (queryTokens.size > 0) {
+            termPresenceScore /= queryTokens.size;
+          }
+
+          // Weighted combination: 70% semantic, 20% tag match, 10% term presence
+          const hybridScore = semScore * 0.7 + tagMatchScore * 0.2 + termPresenceScore * 0.1;
+
+          return { node: n, score: hybridScore };
+        });
+
         scored.sort((a, b) => b.score - a.score);
-        results = scored.slice(0, limit).map((r) => ({
-          id: r.node.id,
-          score: r.score,
-          snippet: r.node.content.slice(0, 160),
-        }));
+        results = scored
+          .filter((r) => r.score >= threshold)
+          .slice(0, limit)
+          .map((r) => ({
+            id: r.node.id,
+            score: r.score,
+            snippet: r.node.content.slice(0, 160),
+          }));
       }
       const payload = { total: results.length, results };
       return {
@@ -140,9 +188,12 @@ export function setupSearchTools(
   // Find similar nodes
   server.tool(
     "kg_find_similar",
-    { nodeId: z.string(), limit: z.number().int().min(1).max(50).default(10) },
-    async ({ nodeId, limit }) => {
-      logToolCall("kg_find_similar", { nodeId, limit });
+    { nodeId: z.string(),
+      limit: z.number().int().min(1).max(50).default(10),
+      threshold: z.number().min(0).max(1).default(0.15).optional()
+        .describe("Minimum similarity score (0-1) for results. Higher = more strict. Default: 0.15") },
+    async ({ nodeId, limit, threshold = 0.15 }) => {
+      logToolCall("kg_find_similar", { nodeId, limit, threshold });
       const base = storage.getNode(nodeId);
       if (!base)
         return {
@@ -157,11 +208,14 @@ export function setupSearchTools(
         score: cosineSimilarity(v, embedText(n.content)),
       }));
       scored.sort((a, b) => b.score - a.score);
-      const results = scored.slice(0, limit).map((r) => ({
-        id: r.node.id,
-        score: r.score,
-        snippet: r.node.content.slice(0, 160),
-      }));
+      const results = scored
+        .filter((r) => r.score >= threshold)
+        .slice(0, limit)
+        .map((r) => ({
+          id: r.node.id,
+          score: r.score,
+          snippet: r.node.content.slice(0, 160),
+        }));
       return {
         content: [
           {
