@@ -7,6 +7,7 @@ import type { FileStorage } from "../storage/FileStorage.js";
 import { getGitHubState, getCurrentBranch } from "../utils/github.js";
 import { isGitHubEnabled, getGitHubToken } from "../config/KGConfig.js";
 import { selectSmartContext } from "../utils/sessionContext.js";
+import { embedText, cosineSimilarity } from "../utils/embeddings.js";
 
 // Helper functions for discovery mode
 interface ProjectSummary {
@@ -321,8 +322,11 @@ export function setupProjectTools(
         sessionStart: new Date().toISOString(),
         // NEW: GitHub state integration
         githubState,
-        // NEW: Workflow reminders for commit frequency
-        workflowReminders: {
+        // IMPORTANT: Agent Training Reminders (NOT user-facing documentation)
+        // These reminders train AI agents on proper development workflows during sessions.
+        // They guide agent behavior for commit patterns, code quality, and best practices.
+        // Users see these indirectly through improved agent behavior, not as direct guidance.
+        agentTrainingReminders: {
           commitFrequency: [
             "🔄 Commit frequently - git hooks provide valuable feedback during development",
             "💡 Target: Commit after each logical change, not just at completion",
@@ -345,96 +349,52 @@ export function setupProjectTools(
     },
   );
 
-  // Get specific node
+  // =============================================================================
+  // CONSOLIDATED NODE TOOL
+  // Replaces: kg_get_node, kg_delete_node, kg_find_similar
+  // =============================================================================
   server.tool(
-    "kg_get_node",
-    "Retrieves a specific knowledge node by its unique ID. Use to fetch detailed information about a particular node including its content, metadata, tags, and relationships.",
+    "kg_node",
+    "Unified tool for node operations. Supports three operations: 'get' to retrieve a node with its relationships, 'delete' to remove a node, 'find_similar' to find semantically similar nodes.",
     {
-      id: z.string().describe("Unique identifier of the knowledge node to retrieve"),
-    },
-    async ({ id }) => {
-      logToolCall("kg_get_node", { id });
-      const node = storage.getNode(id);
-      
-      if (!node) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ error: "Node not found" }, null, 2),
-            },
-          ],
-        };
-      }
-      
-      const edges = storage.listEdges(id);
-      
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ node, relationships: edges }, null, 2),
-          },
-        ],
-      };
-    },
-  );
+      operation: z.enum(["get", "delete", "find_similar"])
+        .describe("Operation to perform: 'get' retrieves node details, 'delete' removes the node, 'find_similar' finds similar nodes."),
+      id: z.string()
+        .describe("ID of the knowledge node to operate on."),
 
-  // Delete node
-  server.tool(
-    "kg_delete_node",
-    "Removes a knowledge node and optionally its relationships from the graph. Use to clean up outdated, incorrect, or redundant information.",
-    {
-      id: z.string().describe("ID of the knowledge node to delete"),
-      deleteEdges: z.boolean().default(true).describe("Whether to also delete all relationships connected to this node"),
+      // delete operation options
+      deleteEdges: z.boolean().default(true).optional()
+        .describe("[delete] Whether to also delete all relationships connected to this node."),
+
+      // find_similar operation options
+      limit: z.number().int().min(1).max(50).default(10).optional()
+        .describe("[find_similar] Maximum number of similar nodes to return."),
+      threshold: z.number().min(0).max(1).default(0.15).optional()
+        .describe("[find_similar] Minimum similarity score (0-1). Higher = stricter matching."),
     },
-    async ({ id, deleteEdges }) => {
-      logToolCall("kg_delete_node", { id, deleteEdges });
-      const node = storage.getNode(id);
-      
-      if (!node) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ error: "Node not found" }, null, 2),
-            },
-          ],
-        };
+    async ({ operation, id, deleteEdges = true, limit = 10, threshold = 0.15 }) => {
+      logToolCall("kg_node", { operation, id, deleteEdges, limit, threshold });
+
+      switch (operation) {
+        case "get":
+          return handleGetNode(storage, id);
+
+        case "delete":
+          return handleDeleteNode(storage, id, deleteEdges);
+
+        case "find_similar":
+          return handleFindSimilar(storage, id, limit, threshold);
+
+        default:
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({ error: `Unknown operation: ${operation}` }, null, 2),
+              },
+            ],
+          };
       }
-      
-      let deletedEdgesCount = 0;
-      if (deleteEdges) {
-        deletedEdgesCount = storage.deleteEdgesForNode(id);
-      }
-      
-      storage.deleteNode(id);
-      
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ 
-              success: true, 
-              deletedNode: id,
-              deletedEdges: deletedEdgesCount
-            }, null, 2),
-          },
-        ],
-      };
-      
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ 
-              success: true, 
-              deletedNode: id,
-              deletedEdges: deleteEdges ? "all" : "none"
-            }, null, 2),
-          },
-        ],
-      };
     },
   );
 
@@ -492,4 +452,111 @@ export function setupProjectTools(
       };
     },
   );
+}
+
+// =============================================================================
+// NODE OPERATION HANDLERS
+// =============================================================================
+
+async function handleGetNode(storage: FileStorage, id: string) {
+  const node = storage.getNode(id);
+
+  if (!node) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ error: "Node not found" }, null, 2),
+        },
+      ],
+    };
+  }
+
+  const edges = storage.listEdges(id);
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ operation: "get", node, relationships: edges }, null, 2),
+      },
+    ],
+  };
+}
+
+async function handleDeleteNode(storage: FileStorage, id: string, deleteEdges: boolean) {
+  const node = storage.getNode(id);
+
+  if (!node) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ error: "Node not found" }, null, 2),
+        },
+      ],
+    };
+  }
+
+  let deletedEdgesCount = 0;
+  if (deleteEdges) {
+    deletedEdgesCount = storage.deleteEdgesForNode(id);
+  }
+
+  storage.deleteNode(id);
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          operation: "delete",
+          success: true,
+          deletedNode: id,
+          deletedEdges: deletedEdgesCount
+        }, null, 2),
+      },
+    ],
+  };
+}
+
+async function handleFindSimilar(storage: FileStorage, id: string, limit: number, threshold: number) {
+  const base = storage.getNode(id);
+
+  if (!base) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ error: "Node not found", results: [] }, null, 2),
+        },
+      ],
+    };
+  }
+
+  const v = embedText(base.content);
+  const nodes = storage.listAllNodes().filter((n) => n.id !== id);
+  const scored = nodes.map((n) => ({
+    node: n,
+    score: cosineSimilarity(v, embedText(n.content)),
+  }));
+
+  scored.sort((a, b) => b.score - a.score);
+  const results = scored
+    .filter((r) => r.score >= threshold)
+    .slice(0, limit)
+    .map((r) => ({
+      id: r.node.id,
+      score: r.score,
+      snippet: r.node.content.slice(0, 160),
+    }));
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ operation: "find_similar", total: results.length, results }, null, 2),
+      },
+    ],
+  };
 }

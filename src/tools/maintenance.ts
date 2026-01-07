@@ -1,9 +1,10 @@
 // Maintenance Personal KG MCP Tools
-// Contains maintenance and data management tools
+// Contains consolidated admin and maintenance tools
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { FileStorage } from "../storage/FileStorage.js";
+import { getHealth } from "../handlers/health.js";
 
 // Helper functions
 function logToolCall(name: string, args?: unknown): void {
@@ -35,141 +36,335 @@ function logToolCall(name: string, args?: unknown): void {
   }
 }
 
+// Admin operation types
+const AdminOperation = [
+  "health",
+  "backup",
+  "validate",
+  "repair",
+  "export",
+  "import",
+  "rename_tag",
+  "merge_tags"
+] as const;
+
 export function setupMaintenanceTools(
   server: McpServer,
   storage: FileStorage
 ): void {
-  // Create backup of knowledge graph
+  // =============================================================================
+  // CONSOLIDATED ADMIN TOOL
+  // Replaces: kg_health, kg_backup, kg_validate, kg_repair, kg_export, kg_import,
+  //           kg_rename_tag, kg_merge_tags
+  // =============================================================================
   server.tool(
-    "kg_backup",
-    "Creates a backup of the entire knowledge graph with configurable retention. Use for data protection and to maintain historical snapshots of your knowledge base.",
+    "kg_admin",
+    "Unified admin tool for maintenance operations. Supports: 'health' for system status, 'backup' for data protection, 'validate' for integrity checks, 'repair' for fixing issues, 'export'/'import' for data migration, 'rename_tag'/'merge_tags' for tag management.",
     {
-      retentionDays: z.number().int().min(0).max(365).default(30).describe("Number of days to keep backup files before automatic deletion (0 = keep forever)"),
-    },
-    async ({ retentionDays = 30 }) => {
-      logToolCall("kg_backup", { retentionDays });
-      const backup = storage.backup(retentionDays);
-      
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ 
-              success: true, 
-              backup: { backupDir: backup.backupDir, retentionDays },
-              message: `Backup created successfully with ${retentionDays} day retention`
-            }, null, 2),
-          },
-        ],
-      };
-    },
-  );
+      operation: z.enum(AdminOperation)
+        .describe("Admin operation: 'health', 'backup', 'validate', 'repair', 'export', 'import', 'rename_tag', 'merge_tags'."),
 
-  // Validate knowledge graph integrity
-  server.tool(
-    "kg_validate",
-    "Performs integrity validation on the knowledge graph data. Use to check for corrupted nodes, broken relationships, or other data consistency issues.",
-    {},
-    async () => {
-      logToolCall("kg_validate");
-      const validation = storage.validate();
-      
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(validation, null, 2),
-          },
-        ],
-      };
-    },
-  );
+      // backup options
+      retentionDays: z.number().int().min(0).max(365).default(30).optional()
+        .describe("[backup] Days to keep backups before deletion (0 = forever)."),
 
-  // Repair knowledge graph issues
-  server.tool(
-    "kg_repair",
-    "Attempts to repair common data integrity issues in the knowledge graph. Use after validation to fix corrupted nodes or broken relationships automatically.",
-    {},
-    async () => {
-      logToolCall("kg_repair");
-      
-      const repair = storage.repair();
-      
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              success: true,
-              ...repair,
-              message: `Repair complete: ${repair.removedNodes} corrupted nodes removed, ${repair.removedEdges} broken edges removed`
-            }, null, 2),
-          },
-        ],
-      };
-    },
-  );
+      // import options
+      payload: z.string().optional()
+        .describe("[import] JSON string of exported knowledge graph data."),
 
-  // Export knowledge graph data
-  server.tool(
-    "kg_export",
-    "Exports all knowledge graph data in a structured format. Use for backups, data migration, or external processing of your knowledge base.",
-    {},
-    async () => {
-      logToolCall("kg_export");
-      const exportData = storage.exportAll();
-      
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(exportData, null, 2),
-          },
-        ],
-      };
-    },
-  );
+      // rename_tag options
+      oldTag: z.string().optional()
+        .describe("[rename_tag] Tag to rename (exact match)."),
+      newTag: z.string().optional()
+        .describe("[rename_tag] New tag name."),
 
-  // Import knowledge graph data
-  server.tool(
-    "kg_import",
-    "Imports knowledge graph data from a previously exported format. Use to restore backups, migrate data, or merge knowledge from different sources.",
-    {
-      payload: z.string().describe("JSON string containing the exported knowledge graph data to import"),
+      // merge_tags options
+      sourceTags: z.array(z.string()).optional()
+        .describe("[merge_tags] Tags to merge (will be removed)."),
+      targetTag: z.string().optional()
+        .describe("[merge_tags] Tag to merge into."),
+
+      // shared options
+      dryRun: z.boolean().default(false).optional()
+        .describe("[rename_tag, merge_tags] Preview changes without applying."),
     },
-    async ({ payload }) => {
-      logToolCall("kg_import", { payloadLength: payload.length });
-      
-      try {
-        const importData = JSON.parse(payload);
-        const result = storage.importAll(importData);
-        
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                success: true,
-                ...result,
-                message: `Import complete: ${result.nodes} nodes imported, ${result.edges} edges imported`
-              }, null, 2),
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                success: false,
-                error: "Invalid import data format",
-                details: error instanceof Error ? error.message : "Unknown error"
-              }, null, 2),
-            },
-          ],
-        };
+    async (args) => {
+      const { operation, retentionDays = 30, payload, oldTag, newTag, sourceTags, targetTag, dryRun = false } = args;
+      logToolCall("kg_admin", { operation, retentionDays, oldTag, newTag, sourceTags, targetTag, dryRun });
+
+      switch (operation) {
+        case "health":
+          return handleHealth();
+
+        case "backup":
+          return handleBackup(storage, retentionDays);
+
+        case "validate":
+          return handleValidate(storage);
+
+        case "repair":
+          return handleRepair(storage);
+
+        case "export":
+          return handleExport(storage);
+
+        case "import":
+          return handleImport(storage, payload);
+
+        case "rename_tag":
+          return handleRenameTag(storage, oldTag, newTag, dryRun);
+
+        case "merge_tags":
+          return handleMergeTags(storage, sourceTags, targetTag, dryRun);
+
+        default:
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({ error: `Unknown operation: ${operation}` }, null, 2),
+              },
+            ],
+          };
       }
     },
   );
+}
+
+// =============================================================================
+// ADMIN OPERATION HANDLERS
+// =============================================================================
+
+async function handleHealth() {
+  const { result } = getHealth();
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ operation: "health", ...result }, null, 2),
+      },
+    ],
+  };
+}
+
+async function handleBackup(storage: FileStorage, retentionDays: number) {
+  const backup = storage.backup(retentionDays);
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          operation: "backup",
+          success: true,
+          backup: { backupDir: backup.backupDir, retentionDays },
+          message: `Backup created successfully with ${retentionDays} day retention`
+        }, null, 2),
+      },
+    ],
+  };
+}
+
+async function handleValidate(storage: FileStorage) {
+  const validation = storage.validate();
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ operation: "validate", ...validation }, null, 2),
+      },
+    ],
+  };
+}
+
+async function handleRepair(storage: FileStorage) {
+  const repair = storage.repair();
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          operation: "repair",
+          success: true,
+          ...repair,
+          message: `Repair complete: ${repair.removedNodes} corrupted nodes removed, ${repair.removedEdges} broken edges removed`
+        }, null, 2),
+      },
+    ],
+  };
+}
+
+async function handleExport(storage: FileStorage) {
+  const exportData = storage.exportAll();
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ operation: "export", ...exportData }, null, 2),
+      },
+    ],
+  };
+}
+
+async function handleImport(storage: FileStorage, payload?: string) {
+  if (!payload) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ error: "payload is required for import operation" }, null, 2),
+        },
+      ],
+    };
+  }
+
+  try {
+    const importData = JSON.parse(payload);
+    const result = storage.importAll(importData);
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            operation: "import",
+            success: true,
+            ...result,
+            message: `Import complete: ${result.nodes} nodes imported, ${result.edges} edges imported`
+          }, null, 2),
+        },
+      ],
+    };
+  } catch (error) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            operation: "import",
+            success: false,
+            error: "Invalid import data format",
+            details: error instanceof Error ? error.message : "Unknown error"
+          }, null, 2),
+        },
+      ],
+    };
+  }
+}
+
+async function handleRenameTag(storage: FileStorage, oldTag?: string, newTag?: string, dryRun: boolean = false) {
+  if (!oldTag || !newTag) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ error: "oldTag and newTag are required for rename_tag operation" }, null, 2),
+        },
+      ],
+    };
+  }
+
+  if (oldTag === newTag) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ error: "oldTag and newTag are the same" }, null, 2),
+        },
+      ],
+    };
+  }
+
+  const nodes = storage.listAllNodes();
+  const affected = nodes.filter((n) => n.tags.includes(oldTag));
+
+  if (!dryRun) {
+    for (const node of affected) {
+      const newTags = node.tags.map((t) => (t === oldTag ? newTag : t));
+      // Deduplicate in case newTag already exists
+      storage.updateNode(node.id, { tags: [...new Set(newTags)] });
+    }
+  }
+
+  const payload = {
+    operation: "rename_tag",
+    success: true,
+    nodesUpdated: affected.length,
+    oldTag,
+    newTag,
+    dryRun,
+    affectedNodeIds: affected.map((n) => n.id),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(payload, null, 2),
+      },
+    ],
+    structuredContent: payload,
+  };
+}
+
+async function handleMergeTags(storage: FileStorage, sourceTags?: string[], targetTag?: string, dryRun: boolean = false) {
+  if (!sourceTags || sourceTags.length === 0) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ error: "sourceTags array is required and cannot be empty" }, null, 2),
+        },
+      ],
+    };
+  }
+
+  if (!targetTag) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ error: "targetTag is required for merge_tags operation" }, null, 2),
+        },
+      ],
+    };
+  }
+
+  const nodes = storage.listAllNodes();
+  const affected = nodes.filter((n) =>
+    n.tags.some((t) => sourceTags.includes(t))
+  );
+
+  if (!dryRun) {
+    for (const node of affected) {
+      const newTags = node.tags
+        .filter((t) => !sourceTags.includes(t))
+        .concat(targetTag);
+      // Deduplicate
+      storage.updateNode(node.id, { tags: [...new Set(newTags)] });
+    }
+  }
+
+  const payload = {
+    operation: "merge_tags",
+    success: true,
+    nodesUpdated: affected.length,
+    sourceTags,
+    targetTag,
+    dryRun,
+    affectedNodeIds: affected.map((n) => n.id),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(payload, null, 2),
+      },
+    ],
+    structuredContent: payload,
+  };
 }

@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ImportanceLevel, KnowledgeNodeType } from "../types/enums.js";
-import { getHealth } from "../handlers/health.js";
 import { FileStorage } from "../storage/FileStorage.js";
 import type { CreateNodeInput } from "../types/domain.js";
 import { findAutoLinks } from "../utils/autoLink.js";
@@ -9,7 +8,7 @@ import { embedText } from "../utils/embeddings.js";
 import { AnnIndex } from "../utils/ann.js";
 import { scoreRelationship } from "../utils/relationships.js";
 
-export const PERSONAL_KG_TOOLS = ["kg_health", "kg_capture"] as const;
+export const PERSONAL_KG_TOOLS = ["kg_capture", "kg_update_node"] as const;
 
 export function setupCoreTools(
   server: McpServer,
@@ -21,21 +20,9 @@ export function setupCoreTools(
   getWorkstreamTag: (tags: string[]) => string | undefined,
   logToolCall: (name: string, args?: unknown) => void
 ) {
-  // Basic health tool
-  server.tool(
-    PERSONAL_KG_TOOLS[0],
-    "Provides system health status and diagnostic information about the Personal KG. Use to check if the knowledge graph is functioning properly, verify storage integrity, and get basic system metrics.",
-    {},
-    async () => {
-      logToolCall("kg_health");
-      const { result } = getHealth();
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    },
-  );
-
   // Primary capture tool
   server.tool(
-    PERSONAL_KG_TOOLS[1],
+    "kg_capture",
     "Primary tool for capturing knowledge nodes. Use this to record decisions, progress updates, insights, questions, and ideas. Automatically creates relationships, normalizes tags, and links to sessions. This is your main entry point for adding knowledge to the graph.",
     {
       content: z.string()
@@ -220,6 +207,82 @@ export function setupCoreTools(
           ],
         };
       }
+    },
+  );
+
+  // Node update tool
+  server.tool(
+    "kg_update_node",
+    "Updates an existing knowledge node. Use to modify content, tags, importance, or visibility of a node. Supports partial updates - only specified fields are changed.",
+    {
+      id: z.string()
+        .describe("ID of the node to update"),
+      content: z.string().optional()
+        .describe("Replace the node's content entirely"),
+      appendContent: z.string().optional()
+        .describe("Append text to the existing content"),
+      tags: z.array(z.string()).optional()
+        .describe("Replace all tags with this array"),
+      mergeTags: z.array(z.string()).optional()
+        .describe("Add these tags to existing tags (set union)"),
+      removeTags: z.array(z.string()).optional()
+        .describe("Remove these specific tags"),
+      visibility: z.enum(["private", "team", "public"]).optional()
+        .describe("Update visibility level"),
+      importance: z.enum(ImportanceLevel).optional()
+        .describe("Update importance level"),
+    },
+    async (args) => {
+      logToolCall("kg_update_node", args);
+
+      const existingNode = storage.getNode(args.id);
+      if (!existingNode) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ error: "Node not found", id: args.id }, null, 2),
+            },
+          ],
+        };
+      }
+
+      const updatedNode = storage.updateNode(args.id, {
+        content: args.content,
+        appendContent: args.appendContent,
+        tags: args.tags,
+        mergeTags: args.mergeTags,
+        removeTags: args.removeTags,
+        visibility: args.visibility,
+        importance: args.importance,
+      });
+
+      if (!updatedNode) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ error: "Failed to update node" }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Re-embed if content changed
+      if (USE_ANN && (args.content || args.appendContent)) {
+        try {
+          ann.add(updatedNode.id, embedText(updatedNode.content, EMBED_DIM));
+        } catch {}
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ success: true, node: updatedNode }, null, 2),
+          },
+        ],
+      };
     },
   );
 }

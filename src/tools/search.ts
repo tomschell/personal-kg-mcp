@@ -5,10 +5,12 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { FileStorage } from "../storage/FileStorage.js";
 import { KnowledgeNodeType } from "../types/enums.js";
-import { formatNodes, type FormatOptions } from "../utils/format.js";
+import { formatNodes, type FormatOptions, type NodeFormat } from "../utils/format.js";
 import { embedText, cosineSimilarity, tokenize } from "../utils/embeddings.js";
 import { reconstructContext } from "../utils/context.js";
 import { expandTags } from "../utils/tagstats.js";
+import { expandTagsFull } from "../utils/tagEnhancements.js";
+import { expandQuery } from "../utils/queryExpansion.js";
 
 // Helper functions
 function logToolCall(name: string, args?: unknown): void {
@@ -40,6 +42,9 @@ function logToolCall(name: string, args?: unknown): void {
   }
 }
 
+// Search mode type
+const SearchMode = ["text", "semantic", "time_range"] as const;
+
 export function setupSearchTools(
   server: McpServer,
   storage: FileStorage,
@@ -48,216 +53,92 @@ export function setupSearchTools(
   EMBED_DIM: number,
   tagCo: any // TODO: Type this properly
 ): void {
-  // Search nodes
+
+  // =============================================================================
+  // CONSOLIDATED SEARCH TOOL
+  // Replaces: kg_search (text), kg_semantic_search, kg_query_time_range
+  // =============================================================================
   server.tool(
     "kg_search",
+    "Unified search tool for finding knowledge nodes. Supports three modes: 'text' for keyword/tag filtering with ranking, 'semantic' for AI-powered meaning-based search, 'time_range' for date-based queries. Default mode is 'semantic' for best results.",
     {
-      query: z.string().optional(),
-      tags: z.array(z.string()).optional(),
-      type: z.enum(KnowledgeNodeType).optional(),
-      limit: z.number().int().min(1).max(100).default(20),
-      format: z.enum(["full", "summary", "minimal"]).optional(),
-      includeContent: z.boolean().optional(),
-      includeTags: z.boolean().optional(),
-      includeMetadata: z.boolean().optional(),
-      summaryLength: z.number().int().min(1).max(2000).optional(),
-    },
-    async ({ query, tags, type, limit, format, includeContent, includeTags, includeMetadata, summaryLength }) => {
-      logToolCall("kg_search", { query, tags, type, limit, format, includeContent, includeTags, includeMetadata, summaryLength });
-      const all = storage.searchNodes({ query, tags, type, limit: 200 });
-      // Rank blend: semantic (if query), tag overlap (if tags provided), recency
-      const now = Date.now();
-      const qVec = query ? embedText(query, EMBED_DIM) : undefined;
-      const baseTags = (tags ?? []).map((t) => t.toLowerCase());
-      const scored = all.map((n) => {
-        const sem = qVec ? cosineSimilarity(qVec, embedText(n.content, EMBED_DIM)) : 0;
-        const nTags = new Set(n.tags.map((t) => t.toLowerCase()));
-        let tagOverlap = 0;
-        if (baseTags.length > 0) for (const t of baseTags) if (nTags.has(t)) tagOverlap += 1;
-        if (baseTags.length > 0) tagOverlap /= baseTags.length;
-        const ageDays = Math.max(0, (now - Date.parse(n.updatedAt || n.createdAt)) / (1000 * 60 * 60 * 24));
-        const recency = Math.max(0, 1 - ageDays / 30);
-        const score = sem * 0.6 + tagOverlap * 0.25 + recency * 0.15;
-        return { node: n, score };
-      });
-      scored.sort((a, b) => b.score - a.score);
-      const nodes = scored.slice(0, limit).map((s) => s.node);
-      const fmt: FormatOptions = { format, includeContent, includeTags, includeMetadata, summaryLength };
-      const payload = { total: nodes.length, nodes: formatNodes(nodes, fmt) } as const;
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(payload, null, 2),
-          },
-        ],
-        structuredContent: payload,
-      };
-    },
-  );
-
-  // Semantic search
-  server.tool(
-    "kg_semantic_search",
-    "Performs AI-powered semantic search using vector similarity. Finds knowledge nodes based on meaning and context rather than exact keywords. Returns most conceptually similar results ranked by relevance.",
-    { query: z.string()
-        .describe("Natural language search query. Be descriptive - this uses AI to find semantically similar content, not just keyword matches."),
-      limit: z.number().int().min(1).max(50).default(10)
-        .describe("Maximum number of results to return. More results = broader coverage but less relevance."),
-      threshold: z.number().min(0).max(1).default(0.15).optional()
-        .describe("Minimum similarity score (0-1) for results. Higher = more strict. Default: 0.15"),
-      hybridMode: z.boolean().default(false).optional()
-        .describe("Enable hybrid search combining semantic similarity with tag matching and term presence. Default: false") },
-    async ({ query, limit, threshold = 0.15, hybridMode = false }) => {
-      logToolCall("kg_semantic_search", { query, limit, threshold, hybridMode });
-      const q = embedText(query, EMBED_DIM);
-
-      // Extract query tokens for hybrid search
-      const queryTokens = hybridMode ? new Set(tokenize(query)) : null;
-
-      let results: Array<{ id: string; score: number; snippet: string }> = [];
-      if (USE_ANN && !hybridMode) {
-        // ANN path - only for pure semantic search
-        const top = ann.search(q, limit * 3);
-        const nodesById = new Map(storage.listAllNodes().map((n) => [n.id, n] as const));
-        results = top
-          .map(({ id, score }: { id: string; score: number }) => ({ id, score, node: nodesById.get(id) }))
-          .filter((r: { id: string; score: number; node: any }) => r.node && r.score >= threshold)
-          .slice(0, limit)
-          .map((r: { id: string; score: number; node: any }) => ({ id: r.id, score: r.score, snippet: r.node!.content.slice(0, 160) }));
-      } else {
-        const nodes = storage.listAllNodes();
-        const scored = nodes.map((n) => {
-          const semScore = cosineSimilarity(q, embedText(n.content, EMBED_DIM));
-
-          if (!hybridMode || !queryTokens) {
-            // Pure semantic search
-            return { node: n, score: semScore };
-          }
-
-          // Hybrid search: combine semantic + tag matching + term presence
-
-          // Tag matching: check if any node tags match query tokens
-          const nodeTags = new Set(n.tags.map(t => t.toLowerCase()));
-          let tagMatchScore = 0;
-          for (const token of queryTokens) {
-            if (nodeTags.has(token)) {
-              tagMatchScore += 1;
-            }
-          }
-          if (queryTokens.size > 0) {
-            tagMatchScore /= queryTokens.size;
-          }
-
-          // Term presence: check if query tokens appear in content
-          const contentTokens = new Set(tokenize(n.content));
-          let termPresenceScore = 0;
-          for (const token of queryTokens) {
-            if (contentTokens.has(token)) {
-              termPresenceScore += 1;
-            }
-          }
-          if (queryTokens.size > 0) {
-            termPresenceScore /= queryTokens.size;
-          }
-
-          // Weighted combination: 70% semantic, 20% tag match, 10% term presence
-          const hybridScore = semScore * 0.7 + tagMatchScore * 0.2 + termPresenceScore * 0.1;
-
-          return { node: n, score: hybridScore };
-        });
-
-        scored.sort((a, b) => b.score - a.score);
-        results = scored
-          .filter((r) => r.score >= threshold)
-          .slice(0, limit)
-          .map((r) => ({
-            id: r.node.id,
-            score: r.score,
-            snippet: r.node.content.slice(0, 160),
-          }));
-      }
-      const payload = { total: results.length, results };
-      return {
-        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-        structuredContent: payload,
-      };
-    },
-  );
-
-  // Find similar nodes
-  server.tool(
-    "kg_find_similar",
-    { nodeId: z.string(),
-      limit: z.number().int().min(1).max(50).default(10),
-      threshold: z.number().min(0).max(1).default(0.15).optional()
-        .describe("Minimum similarity score (0-1) for results. Higher = more strict. Default: 0.15") },
-    async ({ nodeId, limit, threshold = 0.15 }) => {
-      logToolCall("kg_find_similar", { nodeId, limit, threshold });
-      const base = storage.getNode(nodeId);
-      if (!base)
-        return {
-          content: [
-            { type: "text", text: JSON.stringify({ results: [] }, null, 2) },
-          ],
-        };
-      const v = embedText(base.content);
-      const nodes = storage.listAllNodes().filter((n) => n.id !== nodeId);
-      const scored = nodes.map((n) => ({
-        node: n,
-        score: cosineSimilarity(v, embedText(n.content)),
-      }));
-      scored.sort((a, b) => b.score - a.score);
-      const results = scored
-        .filter((r) => r.score >= threshold)
-        .slice(0, limit)
-        .map((r) => ({
-          id: r.node.id,
-          score: r.score,
-          snippet: r.node.content.slice(0, 160),
-        }));
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ total: results.length, results }, null, 2),
-          },
-        ],
-      };
-    },
-  );
-
-  // Time range query
-  server.tool(
-    "kg_query_time_range",
-    "Searches for knowledge nodes within a specific time period. Use to find work done during particular dates or to analyze activity patterns over time.",
-    {
-      start: z.string().optional()
-        .describe("Start date/time for the search range (e.g., '2024-01-01', '2 weeks ago')"),
-      end: z.string().optional()
-        .describe("End date/time for the search range (e.g., '2024-12-31', 'today')"),
+      // Core parameters
       query: z.string().optional()
-        .describe("Optional text query to filter nodes within the time range"),
+        .describe("Search query text. Required for 'text' and 'semantic' modes. For 'semantic' mode, be descriptive - it finds conceptually similar content."),
+      mode: z.enum(SearchMode).default("semantic")
+        .describe("Search mode: 'text' for keyword/tag search with ranking, 'semantic' for AI-powered similarity search, 'time_range' for date-based search."),
+      limit: z.number().int().min(1).max(100).default(20)
+        .describe("Maximum number of results to return."),
+
+      // Text mode parameters
+      tags: z.array(z.string()).optional()
+        .describe("[text mode] Filter by tags. Tags are expanded with synonyms and hierarchies."),
+      type: z.enum(KnowledgeNodeType).optional()
+        .describe("[text mode] Filter by node type: idea, decision, progress, insight, question, session."),
+
+      // Semantic mode parameters
+      threshold: z.number().min(0).max(1).default(0.15).optional()
+        .describe("[semantic mode] Minimum similarity score (0-1). Higher = stricter matching."),
+      hybrid: z.boolean().default(false).optional()
+        .describe("[semantic mode] Combine semantic similarity with tag matching and term presence."),
+
+      // Time range mode parameters
+      start: z.string().optional()
+        .describe("[time_range mode] Start date (e.g., '2024-01-01', '2 weeks ago')."),
+      end: z.string().optional()
+        .describe("[time_range mode] End date (e.g., '2024-12-31', 'today')."),
+
+      // Output formatting (text mode)
+      format: z.enum(["full", "summary", "minimal"]).optional()
+        .describe("[text mode] Output format for results."),
+      includeContent: z.boolean().optional()
+        .describe("[text mode] Include full content in results."),
+      includeTags: z.boolean().optional()
+        .describe("[text mode] Include tags in results."),
+      includeMetadata: z.boolean().optional()
+        .describe("[text mode] Include metadata in results."),
     },
-    async ({ start, end, query }) => {
-      logToolCall("kg_query_time_range", { start, end, query });
-      const nodes = storage.listByTimeRange({ start, end, query });
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({ total: nodes.length, nodes }, null, 2),
-          },
-        ],
-      };
+    async (args) => {
+      const { mode, query, limit, tags, type, threshold = 0.15, hybrid = false, start, end, format, includeContent, includeTags, includeMetadata } = args;
+      logToolCall("kg_search", { mode, query, limit, tags, type, threshold, hybrid, start, end });
+
+      // Dispatch based on mode
+      switch (mode) {
+        case "time_range":
+          return handleTimeRangeSearch(storage, { start, end, query, limit });
+
+        case "semantic":
+          return handleSemanticSearch(storage, ann, USE_ANN, EMBED_DIM, {
+            query: query || "",
+            limit,
+            threshold,
+            hybrid
+          });
+
+        case "text":
+        default:
+          return handleTextSearch(storage, EMBED_DIM, {
+            query,
+            tags,
+            type: type as typeof KnowledgeNodeType[number] | undefined,
+            limit,
+            format: format as NodeFormat | undefined,
+            includeContent,
+            includeTags,
+            includeMetadata
+          });
+      }
     },
   );
 
-  // Context query
+  // =============================================================================
+  // CONTEXT QUERY - Stays separate (reconstructs topic context)
+  // Consider moving to kg_context in future consolidation
+  // =============================================================================
   server.tool(
     "kg_query_context",
     "Reconstructs context around a specific topic by analyzing related knowledge nodes. Use to understand the full context and background of a particular subject area.",
-    { 
+    {
       topic: z.string()
         .describe("Topic or subject area to reconstruct context for (e.g., 'deployment', 'api-design', 'bug-fix')")
     },
@@ -271,4 +152,270 @@ export function setupSearchTools(
       };
     },
   );
+
+  // =============================================================================
+  // LIST TAGS - Stays separate (tag discovery/management)
+  // =============================================================================
+  server.tool(
+    "kg_list_tags",
+    "Lists all tags in the knowledge graph with usage counts. Use to discover available tags, find inconsistencies, or identify commonly used categories.",
+    {
+      prefix: z.string().optional()
+        .describe("Filter tags by prefix (e.g., 'proj:', 'ws:', 'ticket:')"),
+      minCount: z.number().int().min(1).default(1).optional()
+        .describe("Minimum usage count to include a tag"),
+      limit: z.number().int().min(1).max(500).default(50).optional()
+        .describe("Maximum number of tags to return"),
+    },
+    async ({ prefix, minCount = 1, limit = 50 }) => {
+      logToolCall("kg_list_tags", { prefix, minCount, limit });
+
+      const nodes = storage.listAllNodes();
+      const tagCounts = new Map<string, number>();
+
+      for (const node of nodes) {
+        for (const tag of node.tags) {
+          tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+        }
+      }
+
+      let tags = Array.from(tagCounts.entries())
+        .map(([tag, count]) => ({ tag, count }));
+
+      // Filter by prefix
+      if (prefix) {
+        tags = tags.filter((t) => t.tag.startsWith(prefix));
+      }
+
+      // Filter by minimum count
+      tags = tags.filter((t) => t.count >= minCount);
+
+      // Sort by count descending, then alphabetically
+      tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+
+      // Apply limit
+      const total = tags.length;
+      tags = tags.slice(0, limit);
+
+      const payload = { total, tags };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(payload, null, 2),
+          },
+        ],
+        structuredContent: payload,
+      };
+    },
+  );
+}
+
+// =============================================================================
+// SEARCH MODE HANDLERS
+// =============================================================================
+
+interface TextSearchArgs {
+  query?: string;
+  tags?: string[];
+  type?: typeof KnowledgeNodeType[number];
+  limit: number;
+  format?: NodeFormat;
+  includeContent?: boolean;
+  includeTags?: boolean;
+  includeMetadata?: boolean;
+}
+
+async function handleTextSearch(
+  storage: FileStorage,
+  EMBED_DIM: number,
+  args: TextSearchArgs
+) {
+  const { query, tags, type, limit, format, includeContent, includeTags, includeMetadata } = args;
+
+  // Expand query with synonyms if provided
+  const expandedQuery = query ? expandQuery(query) : null;
+
+  // Expand tags with synonyms and hierarchies if provided
+  const expandedTags = tags ? expandTagsFull(tags) : [];
+
+  const all = storage.searchNodes({ query, tags, type, limit: 200 });
+
+  // Enhanced ranking: semantic, tag overlap, query term match, importance, recency
+  const now = Date.now();
+  const qVec = query ? embedText(query, EMBED_DIM) : undefined;
+  const baseTags = expandedTags.map((t) => t.toLowerCase());
+  const queryTerms = expandedQuery ? new Set(expandedQuery.expanded) : null;
+
+  const scored = all.map((n) => {
+    // Semantic similarity (bag-of-words)
+    const sem = qVec ? cosineSimilarity(qVec, embedText(n.content, EMBED_DIM)) : 0;
+
+    // Tag overlap with expanded tags
+    const nTags = new Set(n.tags.map((t) => t.toLowerCase()));
+    let tagOverlap = 0;
+    if (baseTags.length > 0) {
+      for (const t of baseTags) {
+        if (nTags.has(t)) tagOverlap += 1;
+      }
+      tagOverlap /= baseTags.length;
+    }
+
+    // Query term match (expanded query terms in content)
+    let termMatch = 0;
+    if (queryTerms) {
+      const contentTokens = new Set(tokenize(n.content));
+      for (const term of queryTerms) {
+        if (contentTokens.has(term)) termMatch += 1;
+      }
+      termMatch /= queryTerms.size;
+    }
+
+    // Importance boost (high=1.0, medium=0.5, low=0.0)
+    const importanceBoost = n.importance === 'high' ? 1.0 : n.importance === 'medium' ? 0.5 : 0.0;
+
+    // Recency with improved decay (slower decay for better long-term recall)
+    const ageDays = Math.max(0, (now - Date.parse(n.updatedAt || n.createdAt)) / (1000 * 60 * 60 * 24));
+    const recency = Math.max(0, 1 - ageDays / 60); // 60-day window instead of 30
+
+    // Weighted combination: semantic=40%, tags=25%, term match=15%, importance=10%, recency=10%
+    const score = sem * 0.40 + tagOverlap * 0.25 + termMatch * 0.15 + importanceBoost * 0.10 + recency * 0.10;
+    return { node: n, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  const nodes = scored.slice(0, limit).map((s) => s.node);
+  const fmt: FormatOptions = { format, includeContent, includeTags, includeMetadata };
+  const payload = { mode: "text", total: nodes.length, nodes: formatNodes(nodes, fmt) } as const;
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(payload, null, 2),
+      },
+    ],
+    structuredContent: payload,
+  };
+}
+
+interface SemanticSearchArgs {
+  query: string;
+  limit: number;
+  threshold: number;
+  hybrid: boolean;
+}
+
+async function handleSemanticSearch(
+  storage: FileStorage,
+  ann: any,
+  USE_ANN: boolean,
+  EMBED_DIM: number,
+  args: SemanticSearchArgs
+) {
+  const { query, limit, threshold, hybrid } = args;
+
+  if (!query) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ error: "Query required for semantic search", results: [] }, null, 2) }],
+    };
+  }
+
+  const q = embedText(query, EMBED_DIM);
+
+  // Extract query tokens for hybrid search
+  const queryTokens = hybrid ? new Set(tokenize(query)) : null;
+
+  let results: Array<{ id: string; score: number; snippet: string }> = [];
+  if (USE_ANN && !hybrid) {
+    // ANN path - only for pure semantic search
+    const top = ann.search(q, limit * 3);
+    const nodesById = new Map(storage.listAllNodes().map((n) => [n.id, n] as const));
+    results = top
+      .map(({ id, score }: { id: string; score: number }) => ({ id, score, node: nodesById.get(id) }))
+      .filter((r: { id: string; score: number; node: any }) => r.node && r.score >= threshold)
+      .slice(0, limit)
+      .map((r: { id: string; score: number; node: any }) => ({ id: r.id, score: r.score, snippet: r.node!.content.slice(0, 160) }));
+  } else {
+    const nodes = storage.listAllNodes();
+    const scored = nodes.map((n) => {
+      const semScore = cosineSimilarity(q, embedText(n.content, EMBED_DIM));
+
+      if (!hybrid || !queryTokens) {
+        // Pure semantic search
+        return { node: n, score: semScore };
+      }
+
+      // Hybrid search: combine semantic + tag matching + term presence
+
+      // Tag matching: check if any node tags match query tokens
+      const nodeTags = new Set(n.tags.map(t => t.toLowerCase()));
+      let tagMatchScore = 0;
+      for (const token of queryTokens) {
+        if (nodeTags.has(token)) {
+          tagMatchScore += 1;
+        }
+      }
+      if (queryTokens.size > 0) {
+        tagMatchScore /= queryTokens.size;
+      }
+
+      // Term presence: check if query tokens appear in content
+      const contentTokens = new Set(tokenize(n.content));
+      let termPresenceScore = 0;
+      for (const token of queryTokens) {
+        if (contentTokens.has(token)) {
+          termPresenceScore += 1;
+        }
+      }
+      if (queryTokens.size > 0) {
+        termPresenceScore /= queryTokens.size;
+      }
+
+      // Weighted combination: 70% semantic, 20% tag match, 10% term presence
+      const hybridScore = semScore * 0.7 + tagMatchScore * 0.2 + termPresenceScore * 0.1;
+
+      return { node: n, score: hybridScore };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    results = scored
+      .filter((r) => r.score >= threshold)
+      .slice(0, limit)
+      .map((r) => ({
+        id: r.node.id,
+        score: r.score,
+        snippet: r.node.content.slice(0, 160),
+      }));
+  }
+  const payload = { mode: "semantic", total: results.length, results };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+    structuredContent: payload,
+  };
+}
+
+interface TimeRangeSearchArgs {
+  start?: string;
+  end?: string;
+  query?: string;
+  limit: number;
+}
+
+async function handleTimeRangeSearch(
+  storage: FileStorage,
+  args: TimeRangeSearchArgs
+) {
+  const { start, end, query, limit } = args;
+  const nodes = storage.listByTimeRange({ start, end, query });
+  const limitedNodes = nodes.slice(0, limit);
+  const payload = { mode: "time_range", total: limitedNodes.length, nodes: limitedNodes };
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify(payload, null, 2),
+      },
+    ],
+    structuredContent: payload,
+  };
 }
