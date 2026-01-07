@@ -6,6 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { FileStorage } from "../storage/FileStorage.js";
 import { getGitHubState, getCurrentBranch } from "../utils/github.js";
 import { isGitHubEnabled, getGitHubToken } from "../config/KGConfig.js";
+import { selectSmartContext } from "../utils/sessionContext.js";
 
 // Helper functions for discovery mode
 interface ProjectSummary {
@@ -264,26 +265,59 @@ export function setupProjectTools(
       if (workstream) {
         tags.push(`ws:${workstream.toLowerCase().replace(/\s+/g, "-")}`);
       }
-      
-      const recentNodes = storage.searchNodes({ tags, limit });
+
+      // Retrieve MORE nodes than needed for intelligent filtering
+      const effectiveLimit = limit || 20; // Use default of 20 if not specified
+      const candidateLimit = Math.max(effectiveLimit * 3, 60);
+      const allCandidates = storage.searchNodes({ tags, limit: candidateLimit });
+
+      // Apply smart context selection to prevent drowning from high-volume captures
+      const smartContext = selectSmartContext(allCandidates, effectiveLimit);
+
+      // Still explicitly fetch questions and blockers (already prioritized by smart selection)
       const questions = storage.searchNodes({ tags, type: "question", limit: 5 });
       const blockers = storage.searchNodes({ tags: [...tags, "blocker"], limit: 5 });
-      
+
       // Get GitHub state integration (configurable)
       let githubState = null;
       let warnings: any[] = [];
-      
+
       if (isGitHubEnabled()) {
         const currentBranch = getCurrentBranch();
-        githubState = getGitHubState(currentBranch, recentNodes);
+        githubState = getGitHubState(currentBranch, smartContext.priorityNodes);
       }
-      
+
+      // Format clustered work summaries
+      const clusteredWorkSummaries = smartContext.clusters
+        .filter(c => c.type === "cluster" && c.summary)
+        .map(c => ({
+          summary: c.summary,
+          count: c.nodes.length,
+          importance: c.importance,
+          representativeNode: c.representativeNode ? {
+            id: c.representativeNode.id,
+            content: c.representativeNode.content.substring(0, 150) + (c.representativeNode.content.length > 150 ? '...' : ''),
+            type: c.representativeNode.type,
+            updatedAt: c.representativeNode.updatedAt
+          } : null
+        }));
+
       const warmup = {
         project,
         workstream,
-        recentWork: recentNodes.slice(0, limit),
+        recentWork: smartContext.priorityNodes,
         openQuestions: questions,
         blockers,
+        // NEW: Smart context insights
+        contextInsights: {
+          totalCapturedNodes: smartContext.summary.totalNodes,
+          displayedNodes: smartContext.priorityNodes.length,
+          clusteredGroups: clusteredWorkSummaries.length,
+          highVolumePatterns: smartContext.summary.highVolumePatterns,
+          diversityApplied: smartContext.priorityNodes.length < allCandidates.length
+        },
+        // NEW: Grouped work summaries (shows patterns without drowning in details)
+        groupedWork: clusteredWorkSummaries.length > 0 ? clusteredWorkSummaries : undefined,
         sessionStart: new Date().toISOString(),
         // NEW: GitHub state integration
         githubState,
