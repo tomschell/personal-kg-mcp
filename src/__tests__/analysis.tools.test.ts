@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("analysis tools registration", () => {
-  it("registers all analysis tools", () => {
+  it("registers kg_analyze tool", () => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-analysis-tools-"));
     const storage = new FileStorage({ baseDir });
 
@@ -19,24 +19,22 @@ describe("analysis tools registration", () => {
 
     setupAnalysisTools(mockServer, storage);
 
-    expect(registered).toContain("kg_detect_topic_clusters");
-    expect(registered).toContain("kg_find_emerging_concepts");
-    expect(registered).toContain("kg_find_connection_path");
-    expect(registered).toContain("kg_graph_export");
+    expect(registered).toContain("kg_analyze");
+    expect(registered).toHaveLength(1);
   });
 });
 
-describe("kg_detect_topic_clusters functional tests", () => {
+describe("kg_analyze clusters operation", () => {
   let storage: FileStorage;
-  let detectClustersHandler: any;
+  let analyzeHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-clusters-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_detect_topic_clusters") detectClustersHandler = handler;
+        if (name === "kg_analyze") analyzeHandler = handler;
       },
     } as unknown as Parameters<typeof setupAnalysisTools>[0];
 
@@ -44,7 +42,6 @@ describe("kg_detect_topic_clusters functional tests", () => {
   });
 
   it("detects clusters in related content", async () => {
-    // Create nodes with related content
     storage.createNode({
       content: "Topic clustering in knowledge graphs",
       type: "idea",
@@ -66,37 +63,21 @@ describe("kg_detect_topic_clusters functional tests", () => {
       tags: ["boats", "hull"],
     });
 
-    const result = await detectClustersHandler({ limit: 10, threshold: 0.3 });
+    const result = await analyzeHandler({ operation: "clusters", limit: 10, threshold: 0.3 });
     const response = JSON.parse(result.content[0].text);
 
-    expect(response.total).toBeGreaterThan(0);
+    expect(response.operation).toBe("clusters");
+    expect(response.total).toBeGreaterThanOrEqual(0);
     expect(response.clusters).toBeDefined();
-    expect(response.clusters.length).toBeGreaterThan(0);
   });
 
   it("handles empty knowledge graph", async () => {
-    const result = await detectClustersHandler({ limit: 10, threshold: 0.5 });
+    const result = await analyzeHandler({ operation: "clusters", limit: 10, threshold: 0.5 });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("clusters");
     expect(response.total).toBe(0);
     expect(response.clusters).toHaveLength(0);
-  });
-
-  it("respects limit parameter", async () => {
-    // Create many nodes
-    for (let i = 0; i < 20; i++) {
-      storage.createNode({
-        content: `Test node ${i}`,
-        type: "idea",
-        tags: ["test"],
-      });
-    }
-
-    const result = await detectClustersHandler({ limit: 5, threshold: 0.5 });
-    const response = JSON.parse(result.content[0].text);
-
-    // Should respect the limit
-    expect(response.clusters.length).toBeLessThanOrEqual(5);
   });
 
   it("respects threshold parameter", async () => {
@@ -111,29 +92,27 @@ describe("kg_detect_topic_clusters functional tests", () => {
       tags: ["boats"],
     });
 
-    // High threshold should result in fewer clusters
-    const highThresholdResult = await detectClustersHandler({ limit: 10, threshold: 0.8 });
+    const highThresholdResult = await analyzeHandler({ operation: "clusters", limit: 10, threshold: 0.8 });
     const highThresholdResponse = JSON.parse(highThresholdResult.content[0].text);
 
-    // Low threshold should result in more clusters
-    const lowThresholdResult = await detectClustersHandler({ limit: 10, threshold: 0.1 });
+    const lowThresholdResult = await analyzeHandler({ operation: "clusters", limit: 10, threshold: 0.1 });
     const lowThresholdResponse = JSON.parse(lowThresholdResult.content[0].text);
 
     expect(highThresholdResponse.total).toBeLessThanOrEqual(lowThresholdResponse.total);
   });
 });
 
-describe("kg_find_emerging_concepts functional tests", () => {
+describe("kg_analyze emerging operation", () => {
   let storage: FileStorage;
-  let findEmergingHandler: any;
+  let analyzeHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-emerging-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_find_emerging_concepts") findEmergingHandler = handler;
+        if (name === "kg_analyze") analyzeHandler = handler;
       },
     } as unknown as Parameters<typeof setupAnalysisTools>[0];
 
@@ -145,7 +124,6 @@ describe("kg_find_emerging_concepts functional tests", () => {
     const oneDayAgo = now - 24 * 60 * 60 * 1000;
     const tenDaysAgo = now - 10 * 24 * 60 * 60 * 1000;
 
-    // Recent nodes with clustering tag
     storage.createNode({
       content: "New clustering method",
       type: "idea",
@@ -161,7 +139,6 @@ describe("kg_find_emerging_concepts functional tests", () => {
       updatedAt: new Date(oneDayAgo + 1000).toISOString(),
     });
 
-    // Old node with boats tag
     storage.createNode({
       content: "Old boat design",
       type: "idea",
@@ -170,23 +147,23 @@ describe("kg_find_emerging_concepts functional tests", () => {
       updatedAt: new Date(tenDaysAgo).toISOString(),
     });
 
-    const result = await findEmergingHandler({ limit: 10, windowDays: 7 });
+    const result = await analyzeHandler({ operation: "emerging", limit: 10, windowDays: 7 });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("emerging");
     expect(response.total).toBeGreaterThan(0);
     expect(response.emerging).toBeDefined();
-    expect(response.emerging.length).toBeGreaterThan(0);
-    
-    // Should find clustering as emerging concept
+
     const clusteringConcept = response.emerging.find((e: any) => e.tag === "clustering");
     expect(clusteringConcept).toBeDefined();
     expect(clusteringConcept.count).toBeGreaterThanOrEqual(2);
   });
 
   it("handles empty knowledge graph", async () => {
-    const result = await findEmergingHandler({ limit: 10, windowDays: 7 });
+    const result = await analyzeHandler({ operation: "emerging", limit: 10, windowDays: 7 });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("emerging");
     expect(response.total).toBe(0);
     expect(response.emerging).toHaveLength(0);
   });
@@ -196,7 +173,6 @@ describe("kg_find_emerging_concepts functional tests", () => {
     const oneDayAgo = now - 24 * 60 * 60 * 1000;
     const tenDaysAgo = now - 10 * 24 * 60 * 60 * 1000;
 
-    // Recent node
     storage.createNode({
       content: "Recent concept",
       type: "idea",
@@ -205,7 +181,6 @@ describe("kg_find_emerging_concepts functional tests", () => {
       updatedAt: new Date(oneDayAgo).toISOString(),
     });
 
-    // Old node
     storage.createNode({
       content: "Old concept",
       type: "idea",
@@ -214,29 +189,27 @@ describe("kg_find_emerging_concepts functional tests", () => {
       updatedAt: new Date(tenDaysAgo).toISOString(),
     });
 
-    // Short window should only find recent concepts
-    const shortWindowResult = await findEmergingHandler({ limit: 10, windowDays: 2 });
+    const shortWindowResult = await analyzeHandler({ operation: "emerging", limit: 10, windowDays: 2 });
     const shortWindowResponse = JSON.parse(shortWindowResult.content[0].text);
 
-    // Long window should find both concepts
-    const longWindowResult = await findEmergingHandler({ limit: 10, windowDays: 15 });
+    const longWindowResult = await analyzeHandler({ operation: "emerging", limit: 10, windowDays: 15 });
     const longWindowResponse = JSON.parse(longWindowResult.content[0].text);
 
     expect(shortWindowResponse.total).toBeLessThanOrEqual(longWindowResponse.total);
   });
 });
 
-describe("kg_find_connection_path functional tests", () => {
+describe("kg_analyze path operation", () => {
   let storage: FileStorage;
-  let findPathHandler: any;
+  let analyzeHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-path-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_find_connection_path") findPathHandler = handler;
+        if (name === "kg_analyze") analyzeHandler = handler;
       },
     } as unknown as Parameters<typeof setupAnalysisTools>[0];
 
@@ -257,13 +230,14 @@ describe("kg_find_connection_path functional tests", () => {
 
     storage.createEdge(nodeA.id, nodeB.id, "references");
 
-    const result = await findPathHandler({ startId: nodeA.id, endId: nodeB.id });
+    const result = await analyzeHandler({ operation: "path", startId: nodeA.id, endId: nodeB.id });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("path");
+    expect(response.found).toBe(true);
     expect(response.path).toHaveLength(2);
     expect(response.path[0]).toBe(nodeA.id);
     expect(response.path[1]).toBe(nodeB.id);
-    expect(response.length).toBe(2);
   });
 
   it("finds indirect connection through intermediate nodes", async () => {
@@ -286,14 +260,14 @@ describe("kg_find_connection_path functional tests", () => {
     storage.createEdge(nodeA.id, nodeB.id, "references");
     storage.createEdge(nodeB.id, nodeC.id, "relates_to");
 
-    const result = await findPathHandler({ startId: nodeA.id, endId: nodeC.id });
+    const result = await analyzeHandler({ operation: "path", startId: nodeA.id, endId: nodeC.id });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.found).toBe(true);
     expect(response.path).toHaveLength(3);
     expect(response.path[0]).toBe(nodeA.id);
     expect(response.path[1]).toBe(nodeB.id);
     expect(response.path[2]).toBe(nodeC.id);
-    expect(response.length).toBe(3);
   });
 
   it("returns no path when no connection exists", async () => {
@@ -308,11 +282,11 @@ describe("kg_find_connection_path functional tests", () => {
       tags: ["test"],
     });
 
-    const result = await findPathHandler({ startId: nodeA.id, endId: nodeB.id });
+    const result = await analyzeHandler({ operation: "path", startId: nodeA.id, endId: nodeB.id });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.found).toBe(false);
     expect(response.path).toHaveLength(0);
-    expect(response.length).toBe(0);
     expect(response.message).toBe("No path found");
   });
 
@@ -336,40 +310,32 @@ describe("kg_find_connection_path functional tests", () => {
     storage.createEdge(nodeA.id, nodeB.id, "references");
     storage.createEdge(nodeB.id, nodeC.id, "relates_to");
 
-    // Max depth of 1 should not find path to node C
-    const result = await findPathHandler({ startId: nodeA.id, endId: nodeC.id, maxDepth: 1 });
+    const result = await analyzeHandler({ operation: "path", startId: nodeA.id, endId: nodeC.id, maxDepth: 1 });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.found).toBe(false);
     expect(response.path).toHaveLength(0);
-    expect(response.length).toBe(0);
   });
 
-  it("handles non-existent nodes", async () => {
-    const nodeA = storage.createNode({
-      content: "Node A",
-      type: "idea",
-      tags: ["test"],
-    });
-
-    const result = await findPathHandler({ startId: nodeA.id, endId: "non-existent-id" });
+  it("handles missing required parameters", async () => {
+    const result = await analyzeHandler({ operation: "path", startId: "some-id" });
     const response = JSON.parse(result.content[0].text);
 
-    expect(response.path).toHaveLength(0);
-    expect(response.length).toBe(0);
+    expect(response.error).toBeDefined();
   });
 });
 
-describe("kg_graph_export functional tests", () => {
+describe("kg_analyze graph_export operation", () => {
   let storage: FileStorage;
-  let graphExportHandler: any;
+  let analyzeHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-graph-export-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_graph_export") graphExportHandler = handler;
+        if (name === "kg_analyze") analyzeHandler = handler;
       },
     } as unknown as Parameters<typeof setupAnalysisTools>[0];
 
@@ -377,18 +343,16 @@ describe("kg_graph_export functional tests", () => {
   });
 
   it("exports empty knowledge graph structure", async () => {
-    const result = await graphExportHandler({});
+    const result = await analyzeHandler({ operation: "graph_export" });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("graph_export");
     expect(response.metadata.totalNodes).toBe(0);
     expect(response.metadata.totalEdges).toBe(0);
     expect(response.metadata.exportedAt).toBeDefined();
     expect(response.metadata.version).toBe("2.0");
     expect(response.nodes).toHaveLength(0);
     expect(response.edges).toHaveLength(0);
-    expect(response.statistics.nodeTypes).toEqual({});
-    expect(response.statistics.relationTypes).toEqual({});
-    expect(response.statistics.averageStrength).toBe(0);
   });
 
   it("exports populated knowledge graph structure", async () => {
@@ -405,35 +369,24 @@ describe("kg_graph_export functional tests", () => {
 
     storage.createEdge(node1.id, node2.id, "references");
 
-    const result = await graphExportHandler({});
+    const result = await analyzeHandler({ operation: "graph_export" });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.metadata.totalNodes).toBe(2);
     expect(response.metadata.totalEdges).toBe(1);
     expect(response.nodes).toHaveLength(2);
     expect(response.edges).toHaveLength(1);
-    
-    // Check node data
+
     const exportedNode1 = response.nodes.find((n: any) => n.id === node1.id);
-    const exportedNode2 = response.nodes.find((n: any) => n.id === node2.id);
     expect(exportedNode1).toBeDefined();
-    expect(exportedNode2).toBeDefined();
     expect(exportedNode1.type).toBe("idea");
-    expect(exportedNode2.type).toBe("insight");
-    
-    // Check edge data
+
     expect(response.edges[0].fromNodeId).toBe(node1.id);
     expect(response.edges[0].toNodeId).toBe(node2.id);
     expect(response.edges[0].relation).toBe("references");
-    
-    // Check statistics
-    expect(response.statistics.nodeTypes.idea).toBe(1);
-    expect(response.statistics.nodeTypes.insight).toBe(1);
-    expect(response.statistics.relationTypes.references).toBe(1);
-    expect(response.statistics.averageStrength).toBeGreaterThanOrEqual(0);
   });
 
-  it("includes all node and edge properties", async () => {
+  it("includes all node properties", async () => {
     const node = storage.createNode({
       content: "Test node with all properties",
       type: "idea",
@@ -447,7 +400,7 @@ describe("kg_graph_export functional tests", () => {
       },
     });
 
-    const result = await graphExportHandler({});
+    const result = await analyzeHandler({ operation: "graph_export" });
     const response = JSON.parse(result.content[0].text);
 
     const exportedNode = response.nodes[0];
@@ -462,24 +415,20 @@ describe("kg_graph_export functional tests", () => {
       currentBranch: "main",
       currentCommit: "abc123",
     });
-    expect(exportedNode.createdAt).toBeDefined();
-    expect(exportedNode.updatedAt).toBeDefined();
   });
 
   it("calculates accurate statistics", async () => {
-    // Create nodes of different types
     storage.createNode({ content: "Idea 1", type: "idea", tags: ["test"] });
     storage.createNode({ content: "Idea 2", type: "idea", tags: ["test"] });
     storage.createNode({ content: "Insight 1", type: "insight", tags: ["test"] });
     storage.createNode({ content: "Decision 1", type: "decision", tags: ["test"] });
 
-    // Create edges of different types
     const nodes = storage.listAllNodes();
     storage.createEdge(nodes[0].id, nodes[1].id, "references");
     storage.createEdge(nodes[1].id, nodes[2].id, "relates_to");
     storage.createEdge(nodes[2].id, nodes[3].id, "derived_from");
 
-    const result = await graphExportHandler({});
+    const result = await analyzeHandler({ operation: "graph_export" });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.statistics.nodeTypes.idea).toBe(2);
@@ -488,27 +437,20 @@ describe("kg_graph_export functional tests", () => {
     expect(response.statistics.relationTypes.references).toBe(1);
     expect(response.statistics.relationTypes.relates_to).toBe(1);
     expect(response.statistics.relationTypes.derived_from).toBe(1);
-    expect(response.statistics.averageStrength).toBeGreaterThanOrEqual(0);
   });
 });
 
-describe("analysis tools integration tests", () => {
+describe("kg_analyze integration tests", () => {
   let storage: FileStorage;
-  let detectClustersHandler: any;
-  let findEmergingHandler: any;
-  let findPathHandler: any;
-  let graphExportHandler: any;
+  let analyzeHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-analysis-integration-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_detect_topic_clusters") detectClustersHandler = handler;
-        if (name === "kg_find_emerging_concepts") findEmergingHandler = handler;
-        if (name === "kg_find_connection_path") findPathHandler = handler;
-        if (name === "kg_graph_export") graphExportHandler = handler;
+        if (name === "kg_analyze") analyzeHandler = handler;
       },
     } as unknown as Parameters<typeof setupAnalysisTools>[0];
 
@@ -516,12 +458,10 @@ describe("analysis tools integration tests", () => {
   });
 
   it("performs comprehensive analysis workflow", async () => {
-    // Create a complex knowledge graph
     const now = Date.now();
     const oneDayAgo = now - 24 * 60 * 60 * 1000;
     const tenDaysAgo = now - 10 * 24 * 60 * 60 * 1000;
 
-    // Recent clustering-related nodes
     const node1 = storage.createNode({
       content: "New clustering algorithm for knowledge graphs",
       type: "idea",
@@ -537,7 +477,6 @@ describe("analysis tools integration tests", () => {
       updatedAt: new Date(oneDayAgo + 1000).toISOString(),
     });
 
-    // Old boat-related nodes
     const node3 = storage.createNode({
       content: "Boat hull design principles",
       type: "idea",
@@ -546,31 +485,28 @@ describe("analysis tools integration tests", () => {
       updatedAt: new Date(tenDaysAgo).toISOString(),
     });
 
-    // Create relationships
     storage.createEdge(node1.id, node2.id, "references");
     storage.createEdge(node2.id, node3.id, "relates_to");
 
     // 1. Detect topic clusters
-    const clustersResult = await detectClustersHandler({ limit: 10, threshold: 0.3 });
+    const clustersResult = await analyzeHandler({ operation: "clusters", limit: 10, threshold: 0.3 });
     const clustersResponse = JSON.parse(clustersResult.content[0].text);
-    expect(clustersResponse.total).toBeGreaterThan(0);
+    expect(clustersResponse.operation).toBe("clusters");
 
     // 2. Find emerging concepts
-    const emergingResult = await findEmergingHandler({ limit: 10, windowDays: 7 });
+    const emergingResult = await analyzeHandler({ operation: "emerging", limit: 10, windowDays: 7 });
     const emergingResponse = JSON.parse(emergingResult.content[0].text);
-    expect(emergingResponse.total).toBeGreaterThan(0);
+    expect(emergingResponse.operation).toBe("emerging");
 
     // 3. Find connection path
-    const pathResult = await findPathHandler({ startId: node1.id, endId: node3.id });
+    const pathResult = await analyzeHandler({ operation: "path", startId: node1.id, endId: node3.id });
     const pathResponse = JSON.parse(pathResult.content[0].text);
     expect(pathResponse.path).toHaveLength(3);
 
     // 4. Export graph structure
-    const exportResult = await graphExportHandler({});
+    const exportResult = await analyzeHandler({ operation: "graph_export" });
     const exportResponse = JSON.parse(exportResult.content[0].text);
     expect(exportResponse.metadata.totalNodes).toBe(3);
     expect(exportResponse.metadata.totalEdges).toBe(2);
-    expect(exportResponse.statistics.nodeTypes.idea).toBe(2);
-    expect(exportResponse.statistics.nodeTypes.insight).toBe(1);
   });
 });

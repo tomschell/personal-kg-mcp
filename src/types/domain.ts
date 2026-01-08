@@ -9,6 +9,7 @@ export const KnowledgeRelation = [
   "derived_from",
   "blocks",
   "duplicates",
+  "resolved_by",
 ] as const;
 export type KnowledgeRelation = (typeof KnowledgeRelation)[number];
 

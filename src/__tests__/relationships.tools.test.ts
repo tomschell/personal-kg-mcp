@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("relationships tools registration", () => {
-  it("registers kg_create_edge and kg_list_edges", () => {
+  it("registers kg_edges tool", () => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-rel-tools-"));
     const storage = new FileStorage({ baseDir });
 
@@ -19,27 +19,22 @@ describe("relationships tools registration", () => {
 
     setupRelationshipTools(mockServer, storage);
 
-    expect(registered).toContain("kg_create_edge");
-    expect(registered).toContain("kg_list_edges");
-    // Maintenance tool is also part of relationships module today
-    expect(registered).toContain("kg_relationships_maintenance");
+    expect(registered).toContain("kg_edges");
+    expect(registered).toHaveLength(1);
   });
 });
 
-describe("kg_create_edge functional tests", () => {
+describe("kg_edges create operation", () => {
   let storage: FileStorage;
-  let mockServer: any;
-  let createEdgeHandler: any;
-  let listEdgesHandler: any;
+  let edgesHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-rel-create-"));
     storage = new FileStorage({ baseDir });
-    
-    mockServer = {
+
+    const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_create_edge") createEdgeHandler = handler;
-        if (name === "kg_list_edges") listEdgesHandler = handler;
+        if (name === "kg_edges") edgesHandler = handler;
       },
     } as unknown as Parameters<typeof setupRelationshipTools>[0];
 
@@ -53,21 +48,23 @@ describe("kg_create_edge functional tests", () => {
       tags: ["test"],
     });
     const nodeB = storage.createNode({
-      content: "Test node B", 
+      content: "Test node B",
       type: "insight",
       tags: ["test"],
     });
 
     const relations = ["references", "relates_to", "derived_from", "blocks", "duplicates"] as const;
-    
+
     for (const relation of relations) {
-      const result = await createEdgeHandler({ 
-        fromNodeId: nodeA.id, 
-        toNodeId: nodeB.id, 
-        relation 
+      const result = await edgesHandler({
+        operation: "create",
+        fromNodeId: nodeA.id,
+        toNodeId: nodeB.id,
+        relation
       });
-      
+
       const response = JSON.parse(result.content[0].text);
+      expect(response.operation).toBe("create");
       expect(response.success).toBe(true);
       expect(response.edge.fromNodeId).toBe(nodeA.id);
       expect(response.edge.toNodeId).toBe(nodeB.id);
@@ -78,9 +75,10 @@ describe("kg_create_edge functional tests", () => {
   });
 
   it("returns error when nodes don't exist", async () => {
-    const result = await createEdgeHandler({
+    const result = await edgesHandler({
+      operation: "create",
       fromNodeId: "non-existent-id",
-      toNodeId: "another-non-existent-id", 
+      toNodeId: "another-non-existent-id",
       relation: "references"
     });
 
@@ -95,7 +93,8 @@ describe("kg_create_edge functional tests", () => {
       tags: ["test"],
     });
 
-    const result = await createEdgeHandler({
+    const result = await edgesHandler({
+      operation: "create",
       fromNodeId: "non-existent-id",
       toNodeId: nodeB.id,
       relation: "references"
@@ -108,11 +107,12 @@ describe("kg_create_edge functional tests", () => {
   it("returns error when toNode doesn't exist", async () => {
     const nodeA = storage.createNode({
       content: "Test node A",
-      type: "idea", 
+      type: "idea",
       tags: ["test"],
     });
 
-    const result = await createEdgeHandler({
+    const result = await edgesHandler({
+      operation: "create",
       fromNodeId: nodeA.id,
       toNodeId: "non-existent-id",
       relation: "references"
@@ -130,7 +130,7 @@ describe("kg_create_edge functional tests", () => {
     });
     const nodeB = storage.createNode({
       content: "Capture git branch and commit for nodes",
-      type: "insight", 
+      type: "insight",
       tags: ["git"],
     });
     const nodeC = storage.createNode({
@@ -139,12 +139,14 @@ describe("kg_create_edge functional tests", () => {
       tags: ["boats"],
     });
 
-    const resultAB = await createEdgeHandler({
+    const resultAB = await edgesHandler({
+      operation: "create",
       fromNodeId: nodeA.id,
       toNodeId: nodeB.id,
       relation: "references"
     });
-    const resultAC = await createEdgeHandler({
+    const resultAC = await edgesHandler({
+      operation: "create",
       fromNodeId: nodeA.id,
       toNodeId: nodeC.id,
       relation: "references"
@@ -158,17 +160,17 @@ describe("kg_create_edge functional tests", () => {
   });
 });
 
-describe("kg_list_edges functional tests", () => {
+describe("kg_edges list operation", () => {
   let storage: FileStorage;
-  let listEdgesHandler: any;
+  let edgesHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-rel-list-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_list_edges") listEdgesHandler = handler;
+        if (name === "kg_edges") edgesHandler = handler;
       },
     } as unknown as Parameters<typeof setupRelationshipTools>[0];
 
@@ -183,9 +185,10 @@ describe("kg_list_edges functional tests", () => {
     storage.createEdge(nodeA.id, nodeB.id, "references");
     storage.createEdge(nodeB.id, nodeC.id, "relates_to");
 
-    const result = await listEdgesHandler({});
+    const result = await edgesHandler({ operation: "list" });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("list");
     expect(response.total).toBe(2);
     expect(response.edges).toHaveLength(2);
     expect(response.edges.some((e: any) => e.fromNodeId === nodeA.id && e.toNodeId === nodeB.id)).toBe(true);
@@ -200,7 +203,7 @@ describe("kg_list_edges functional tests", () => {
     storage.createEdge(nodeA.id, nodeB.id, "references");
     storage.createEdge(nodeB.id, nodeC.id, "relates_to");
 
-    const result = await listEdgesHandler({ nodeId: nodeA.id });
+    const result = await edgesHandler({ operation: "list", nodeId: nodeA.id });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.total).toBe(1);
@@ -217,7 +220,7 @@ describe("kg_list_edges functional tests", () => {
     storage.createEdge(nodeA.id, nodeB.id, "references");
     storage.createEdge(nodeB.id, nodeC.id, "relates_to");
 
-    const result = await listEdgesHandler({ nodeId: nodeB.id });
+    const result = await edgesHandler({ operation: "list", nodeId: nodeB.id });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.total).toBe(2);
@@ -227,7 +230,7 @@ describe("kg_list_edges functional tests", () => {
   });
 
   it("returns empty list for non-existent nodeId", async () => {
-    const result = await listEdgesHandler({ nodeId: "non-existent-id" });
+    const result = await edgesHandler({ operation: "list", nodeId: "non-existent-id" });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.total).toBe(0);
@@ -235,19 +238,59 @@ describe("kg_list_edges functional tests", () => {
   });
 });
 
-describe("relationships integration tests", () => {
+describe("kg_edges maintain operation", () => {
   let storage: FileStorage;
-  let createEdgeHandler: any;
-  let listEdgesHandler: any;
+  let edgesHandler: any;
+
+  beforeEach(() => {
+    const baseDir = mkdtempSync(join(tmpdir(), "pkg-rel-maintain-"));
+    storage = new FileStorage({ baseDir });
+
+    const mockServer = {
+      tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
+        if (name === "kg_edges") edgesHandler = handler;
+      },
+    } as unknown as Parameters<typeof setupRelationshipTools>[0];
+
+    setupRelationshipTools(mockServer, storage);
+  });
+
+  it("performs comprehensive maintenance", async () => {
+    storage.createNode({ content: "Node A about testing", type: "idea", tags: ["test"] });
+    storage.createNode({ content: "Node B about testing code", type: "idea", tags: ["test"] });
+
+    const result = await edgesHandler({ operation: "maintain", maintainOp: "comprehensive" });
+    const response = JSON.parse(result.content[0].text);
+
+    expect(response.operation).toBe("maintain");
+    expect(response.success).toBe(true);
+    expect(response.maintainOp).toBe("comprehensive");
+  });
+
+  it("performs rebuild operation", async () => {
+    storage.createNode({ content: "Similar content about graphs", type: "idea", tags: ["test"] });
+    storage.createNode({ content: "Similar content about graph structures", type: "idea", tags: ["test"] });
+
+    const result = await edgesHandler({ operation: "maintain", maintainOp: "rebuild", rebuildThreshold: 0.3 });
+    const response = JSON.parse(result.content[0].text);
+
+    expect(response.success).toBe(true);
+    expect(response.maintainOp).toBe("rebuild");
+    expect(response.rebuiltCount).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("kg_edges integration tests", () => {
+  let storage: FileStorage;
+  let edgesHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-rel-integration-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_create_edge") createEdgeHandler = handler;
-        if (name === "kg_list_edges") listEdgesHandler = handler;
+        if (name === "kg_edges") edgesHandler = handler;
       },
     } as unknown as Parameters<typeof setupRelationshipTools>[0];
 
@@ -259,7 +302,8 @@ describe("relationships integration tests", () => {
     const nodeB = storage.createNode({ content: "Node B", type: "idea", tags: ["test"] });
 
     // Create edge via tool
-    const createResult = await createEdgeHandler({
+    const createResult = await edgesHandler({
+      operation: "create",
       fromNodeId: nodeA.id,
       toNodeId: nodeB.id,
       relation: "references"
@@ -267,9 +311,9 @@ describe("relationships integration tests", () => {
     const createdEdge = JSON.parse(createResult.content[0].text).edge;
 
     // Verify edge exists in storage
-    const listResult = await listEdgesHandler({});
+    const listResult = await edgesHandler({ operation: "list" });
     const allEdges = JSON.parse(listResult.content[0].text).edges;
-    
+
     expect(allEdges).toHaveLength(1);
     expect(allEdges[0].id).toBe(createdEdge.id);
     expect(allEdges[0].fromNodeId).toBe(nodeA.id);
@@ -281,13 +325,14 @@ describe("relationships integration tests", () => {
     const nodeA = storage.createNode({ content: "Node A", type: "idea", tags: ["test"] });
     const nodeB = storage.createNode({ content: "Node B", type: "idea", tags: ["test"] });
 
-    await createEdgeHandler({
+    await edgesHandler({
+      operation: "create",
       fromNodeId: nodeA.id,
       toNodeId: nodeB.id,
       relation: "blocks"
     });
 
-    const result = await listEdgesHandler({ nodeId: nodeA.id });
+    const result = await edgesHandler({ operation: "list", nodeId: nodeA.id });
     const edges = JSON.parse(result.content[0].text).edges;
 
     expect(edges).toHaveLength(1);
@@ -297,19 +342,17 @@ describe("relationships integration tests", () => {
   });
 });
 
-describe("relationships data integrity tests", () => {
+describe("kg_edges data integrity tests", () => {
   let storage: FileStorage;
-  let createEdgeHandler: any;
-  let listEdgesHandler: any;
+  let edgesHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-rel-integrity-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_create_edge") createEdgeHandler = handler;
-        if (name === "kg_list_edges") listEdgesHandler = handler;
+        if (name === "kg_edges") edgesHandler = handler;
       },
     } as unknown as Parameters<typeof setupRelationshipTools>[0];
 
@@ -320,12 +363,14 @@ describe("relationships data integrity tests", () => {
     const nodeA = storage.createNode({ content: "Node A", type: "idea", tags: ["test"] });
     const nodeB = storage.createNode({ content: "Node B", type: "idea", tags: ["test"] });
 
-    const edge1 = await createEdgeHandler({
+    const edge1 = await edgesHandler({
+      operation: "create",
       fromNodeId: nodeA.id,
       toNodeId: nodeB.id,
       relation: "references"
     });
-    const edge2 = await createEdgeHandler({
+    const edge2 = await edgesHandler({
+      operation: "create",
       fromNodeId: nodeA.id,
       toNodeId: nodeB.id,
       relation: "relates_to"
@@ -338,7 +383,7 @@ describe("relationships data integrity tests", () => {
     expect(edge1Data.relation).toBe("references");
     expect(edge2Data.relation).toBe("relates_to");
 
-    const allEdges = JSON.parse((await listEdgesHandler({})).content[0].text).edges;
+    const allEdges = JSON.parse((await edgesHandler({ operation: "list" })).content[0].text).edges;
     expect(allEdges).toHaveLength(2);
   });
 
@@ -346,12 +391,14 @@ describe("relationships data integrity tests", () => {
     const nodeA = storage.createNode({ content: "Node A", type: "idea", tags: ["test"] });
     const nodeB = storage.createNode({ content: "Node B", type: "idea", tags: ["test"] });
 
-    const edgeAB = await createEdgeHandler({
+    const edgeAB = await edgesHandler({
+      operation: "create",
       fromNodeId: nodeA.id,
       toNodeId: nodeB.id,
       relation: "references"
     });
-    const edgeBA = await createEdgeHandler({
+    const edgeBA = await edgesHandler({
+      operation: "create",
       fromNodeId: nodeB.id,
       toNodeId: nodeA.id,
       relation: "relates_to"
@@ -366,7 +413,7 @@ describe("relationships data integrity tests", () => {
     expect(edgeBAData.fromNodeId).toBe(nodeB.id);
     expect(edgeBAData.toNodeId).toBe(nodeA.id);
 
-    const allEdges = JSON.parse((await listEdgesHandler({})).content[0].text).edges;
+    const allEdges = JSON.parse((await edgesHandler({ operation: "list" })).content[0].text).edges;
     expect(allEdges).toHaveLength(2);
   });
 
@@ -374,7 +421,8 @@ describe("relationships data integrity tests", () => {
     const nodeA = storage.createNode({ content: "Node A", type: "idea", tags: ["test"] });
 
     // Try to create edge with non-existent toNode
-    const result = await createEdgeHandler({
+    const result = await edgesHandler({
+      operation: "create",
       fromNodeId: nodeA.id,
       toNodeId: "non-existent-id",
       relation: "references"
@@ -384,9 +432,7 @@ describe("relationships data integrity tests", () => {
     expect(response.error).toBe("One or both nodes not found");
 
     // Verify no edge was created
-    const allEdges = JSON.parse((await listEdgesHandler({})).content[0].text).edges;
+    const allEdges = JSON.parse((await edgesHandler({ operation: "list" })).content[0].text).edges;
     expect(allEdges).toHaveLength(0);
   });
 });
-
-

@@ -135,6 +135,7 @@ export function setupCoreTools(
           });
         }
       }
+
       return {
         content: [
           {
@@ -145,8 +146,6 @@ export function setupCoreTools(
       };
     },
   );
-
-
 
   // Session linking tool
   server.tool(

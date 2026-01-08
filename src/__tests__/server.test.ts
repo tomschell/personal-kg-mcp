@@ -9,7 +9,7 @@ describe("personal-kg-mcp", () => {
     expect(result.name).toBe("personal-kg-mcp");
   });
 
-  it("exposes exactly 24 tools with required names", () => {
+  it("exposes exactly 17 tools with required names", () => {
     const registered: string[] = [];
     const fakeServer = { tool: (name: string) => registered.push(name) } as any;
     const fakeStorage = {} as any;
@@ -32,16 +32,40 @@ describe("personal-kg-mcp", () => {
       tagCo,
     );
     const toolNames = registered;
+
+    // Consolidated tool names (16 tools total)
     const expected = [
-      "kg_health","kg_capture","kg_capture_session","kg_link_session",
-      "kg_search","kg_semantic_search","kg_find_similar","kg_query_time_range","kg_query_context",
-      "kg_create_edge","kg_list_edges","kg_relationships_maintenance",
-      "kg_backup","kg_validate","kg_repair","kg_export","kg_import",
-      "kg_detect_topic_clusters","kg_find_emerging_concepts","kg_find_connection_path",
-      "kg_get_project_state","kg_session_warmup","kg_get_node","kg_delete_node"
+      // Core tools
+      "kg_capture",
+      "kg_link_session",
+      "kg_update_node",
+
+      // Search tools
+      "kg_search",
+      "kg_query_context",
+      "kg_list_tags",
+      "kg_get_relevant_context",
+
+      // Relationship tools (consolidated)
+      "kg_edges",
+
+      // Maintenance tools (consolidated)
+      "kg_admin",
+
+      // Analysis tools (consolidated)
+      "kg_analyze",
+
+      // Project tools
+      "kg_get_project_state",
+      "kg_session_warmup",
+      "kg_node",
+      "kg_capture_session",
+      "kg_open_questions",
+      "kg_resolve_question",
     ];
-    expect(expected.length).toBe(24);
+
+    expect(expected.length).toBe(16);
     for (const name of expected) expect(toolNames).toContain(name);
-    expect(toolNames.length).toBeGreaterThanOrEqual(expected.length);
+    expect(toolNames.length).toBe(expected.length);
   });
 });

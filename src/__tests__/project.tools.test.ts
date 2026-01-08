@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { setupProjectTools } from "../tools/project.js";
+import { setupProjectTools, setupQuestionTools } from "../tools/project.js";
 import { FileStorage } from "../storage/FileStorage.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { rmSync } from "fs";
-import { join } from "path";
 
 describe("Project Tools", () => {
   let mockServer: McpServer;
@@ -15,19 +14,20 @@ describe("Project Tools", () => {
     // Reset storage with unique directory for each test
     testDir = `test-storage-${Date.now()}-${Math.random()}`;
     storage = new FileStorage({ baseDir: testDir });
-    
+
     // Clear registered tools
     registeredTools = [];
-    
+
     // Create mock server
     mockServer = {
       tool: vi.fn((name: string, description: string, schema: any, handler: Function) => {
         registeredTools.push({ name, handler });
       }),
     } as unknown as McpServer;
-    
+
     // Setup project tools
     setupProjectTools(mockServer, storage);
+    setupQuestionTools(mockServer, storage);
   });
 
   describe("kg_get_project_state", () => {
@@ -98,11 +98,11 @@ describe("Project Tools", () => {
 
     it("should normalize project name correctly", async () => {
       const tool = registeredTools.find(t => t.name === "kg_get_project_state");
-      
+
       // Test with spaces and mixed case
       const result = await tool!.handler({ project: "Test Project Name" });
       const data = JSON.parse(result.content[0].text);
-      
+
       expect(data.project).toBe("Test Project Name");
       // The tool should look for "proj:test-project-name" tag
     });
@@ -111,31 +111,31 @@ describe("Project Tools", () => {
   describe("kg_session_warmup", () => {
     it("should return session warmup data", async () => {
       // Create test nodes with workstream tags
-      const recentNode = storage.createNode({
+      storage.createNode({
         content: "Recent work item",
         type: "progress",
         tags: ["proj:test-project", "ws:frontend"],
       });
 
-      const questionNode = storage.createNode({
+      storage.createNode({
         content: "Open question",
         type: "question",
         tags: ["proj:test-project", "ws:frontend"],
       });
 
-      const blockerNode = storage.createNode({
+      storage.createNode({
         content: "Blocking issue",
         type: "question",
         tags: ["proj:test-project", "ws:frontend", "blocker"],
       });
 
       const tool = registeredTools.find(t => t.name === "kg_session_warmup");
-      const result = await tool!.handler({ 
-        project: "test-project", 
+      const result = await tool!.handler({
+        project: "test-project",
         workstream: "frontend",
-        limit: 10 
+        limit: 10
       });
-      
+
       const data = JSON.parse(result.content[0].text);
 
       expect(data.project).toBe("test-project");
@@ -155,11 +155,11 @@ describe("Project Tools", () => {
       });
 
       const tool = registeredTools.find(t => t.name === "kg_session_warmup");
-      const result = await tool!.handler({ 
-        project: "test-project", 
-        limit: 5 
+      const result = await tool!.handler({
+        project: "test-project",
+        limit: 5
       });
-      
+
       const data = JSON.parse(result.content[0].text);
 
       expect(data.project).toBe("test-project");
@@ -180,11 +180,11 @@ describe("Project Tools", () => {
       }
 
       const tool = registeredTools.find(t => t.name === "kg_session_warmup");
-      const result = await tool!.handler({ 
-        project: "test-project", 
-        limit: 10 
+      const result = await tool!.handler({
+        project: "test-project",
+        limit: 10
       });
-      
+
       const data = JSON.parse(result.content[0].text);
       expect(data.recentWork).toHaveLength(10);
     });
@@ -200,15 +200,15 @@ describe("Project Tools", () => {
       }
 
       const tool = registeredTools.find(t => t.name === "kg_session_warmup");
-      const result = await tool!.handler({ 
+      const result = await tool!.handler({
         project: "test-project"
       });
-      
+
       const data = JSON.parse(result.content[0].text);
       expect(data.recentWork).toHaveLength(20); // Default limit is 20
     });
 
-    // NEW: Discovery mode tests
+    // Discovery mode tests
     it('should enable discovery mode when no project specified', async () => {
       const tool = registeredTools.find(t => t.name === "kg_session_warmup");
       const result = await tool!.handler({
@@ -265,7 +265,7 @@ describe("Project Tools", () => {
 
       // Mock the storage to return empty results
       vi.spyOn(emptyStorage, 'searchNodes').mockReturnValue([]);
-      
+
       setupProjectTools(emptyServer, emptyStorage);
 
       const tool = registeredTools.find(t => t.name === "kg_session_warmup");
@@ -298,11 +298,11 @@ describe("Project Tools", () => {
       expect(data.openQuestions).toBeDefined();
       expect(data.blockers).toBeDefined();
       expect(data.githubState).toBeDefined();
-      expect(data.workflowReminders).toBeDefined();
+      expect(data.agentTrainingReminders).toBeDefined();
     });
   });
 
-  describe("kg_get_node", () => {
+  describe("kg_node get operation", () => {
     it("should return node with relationships", async () => {
       const node = storage.createNode({
         content: "Test node",
@@ -310,10 +310,11 @@ describe("Project Tools", () => {
         tags: ["test"],
       });
 
-      const tool = registeredTools.find(t => t.name === "kg_get_node");
-      const result = await tool!.handler({ id: node.id });
+      const tool = registeredTools.find(t => t.name === "kg_node");
+      const result = await tool!.handler({ operation: "get", id: node.id });
       const data = JSON.parse(result.content[0].text);
 
+      expect(data.operation).toBe("get");
       expect(data.node).toBeDefined();
       expect(data.node.id).toBe(node.id);
       expect(data.node.content).toBe("Test node");
@@ -322,15 +323,15 @@ describe("Project Tools", () => {
     });
 
     it("should return error for non-existent node", async () => {
-      const tool = registeredTools.find(t => t.name === "kg_get_node");
-      const result = await tool!.handler({ id: "non-existent-id" });
+      const tool = registeredTools.find(t => t.name === "kg_node");
+      const result = await tool!.handler({ operation: "get", id: "non-existent-id" });
       const data = JSON.parse(result.content[0].text);
 
       expect(data.error).toBe("Node not found");
     });
   });
 
-  describe("kg_delete_node", () => {
+  describe("kg_node delete operation", () => {
     it("should delete node successfully", async () => {
       const node = storage.createNode({
         content: "Node to delete",
@@ -338,10 +339,11 @@ describe("Project Tools", () => {
         tags: ["test"],
       });
 
-      const tool = registeredTools.find(t => t.name === "kg_delete_node");
-      const result = await tool!.handler({ id: node.id, deleteEdges: true });
+      const tool = registeredTools.find(t => t.name === "kg_node");
+      const result = await tool!.handler({ operation: "delete", id: node.id, deleteEdges: true });
       const data = JSON.parse(result.content[0].text);
 
+      expect(data.operation).toBe("delete");
       expect(data.success).toBe(true);
       expect(data.deletedNode).toBe(node.id);
       expect(data.deletedEdges).toBe(0); // No edges to delete in this test
@@ -358,8 +360,8 @@ describe("Project Tools", () => {
         tags: ["test"],
       });
 
-      const tool = registeredTools.find(t => t.name === "kg_delete_node");
-      const result = await tool!.handler({ id: node.id, deleteEdges: false });
+      const tool = registeredTools.find(t => t.name === "kg_node");
+      const result = await tool!.handler({ operation: "delete", id: node.id, deleteEdges: false });
       const data = JSON.parse(result.content[0].text);
 
       expect(data.success).toBe(true);
@@ -368,8 +370,8 @@ describe("Project Tools", () => {
     });
 
     it("should return error for non-existent node", async () => {
-      const tool = registeredTools.find(t => t.name === "kg_delete_node");
-      const result = await tool!.handler({ id: "non-existent-id" });
+      const tool = registeredTools.find(t => t.name === "kg_node");
+      const result = await tool!.handler({ operation: "delete", id: "non-existent-id" });
       const data = JSON.parse(result.content[0].text);
 
       expect(data.error).toBe("Node not found");
@@ -382,8 +384,8 @@ describe("Project Tools", () => {
         tags: ["test"],
       });
 
-      const tool = registeredTools.find(t => t.name === "kg_delete_node");
-      const result = await tool!.handler({ id: node.id });
+      const tool = registeredTools.find(t => t.name === "kg_node");
+      const result = await tool!.handler({ operation: "delete", id: node.id });
       const data = JSON.parse(result.content[0].text);
 
       expect(data.success).toBe(true);
@@ -406,8 +408,8 @@ describe("Project Tools", () => {
       // Create an edge between the nodes
       storage.createEdge(node1.id, node2.id, "references");
 
-      const tool = registeredTools.find(t => t.name === "kg_delete_node");
-      const result = await tool!.handler({ id: node1.id, deleteEdges: true });
+      const tool = registeredTools.find(t => t.name === "kg_node");
+      const result = await tool!.handler({ operation: "delete", id: node1.id, deleteEdges: true });
       const data = JSON.parse(result.content[0].text);
 
       expect(data.success).toBe(true);
@@ -421,6 +423,36 @@ describe("Project Tools", () => {
       // Verify edge is deleted
       const remainingEdges = storage.listEdges();
       expect(remainingEdges).toHaveLength(0);
+    });
+  });
+
+  describe("kg_node find_similar operation", () => {
+    it("should find similar nodes", async () => {
+      const node1 = storage.createNode({
+        content: "Knowledge graph implementation details",
+        type: "idea",
+        tags: ["kg"],
+      });
+
+      storage.createNode({
+        content: "Knowledge graph architecture design",
+        type: "idea",
+        tags: ["kg"],
+      });
+
+      storage.createNode({
+        content: "Completely unrelated topic about boats",
+        type: "idea",
+        tags: ["boats"],
+      });
+
+      const tool = registeredTools.find(t => t.name === "kg_node");
+      const result = await tool!.handler({ operation: "find_similar", id: node1.id, limit: 5 });
+      const data = JSON.parse(result.content[0].text);
+
+      expect(data.operation).toBe("find_similar");
+      expect(data.results).toBeDefined();
+      expect(Array.isArray(data.results)).toBe(true);
     });
   });
 
@@ -486,6 +518,58 @@ describe("Project Tools", () => {
     });
   });
 
+  describe("kg_open_questions", () => {
+    it("should list open questions", async () => {
+      storage.createNode({
+        content: "How to implement caching?",
+        type: "question",
+        tags: ["proj:test-project"],
+      });
+
+      storage.createNode({
+        content: "What framework to use?",
+        type: "question",
+        tags: ["proj:test-project"],
+      });
+
+      const tool = registeredTools.find(t => t.name === "kg_open_questions");
+      const result = await tool!.handler({ project: "test-project", limit: 10 });
+      const data = JSON.parse(result.content[0].text);
+
+      expect(data.total).toBe(2);
+      expect(data.questions).toHaveLength(2);
+    });
+  });
+
+  describe("kg_resolve_question", () => {
+    it("should resolve a question", async () => {
+      const questionNode = storage.createNode({
+        content: "How to implement caching?",
+        type: "question",
+        tags: ["proj:test-project"],
+      });
+
+      const decisionNode = storage.createNode({
+        content: "Use Redis for caching",
+        type: "decision",
+        tags: ["proj:test-project"],
+      });
+
+      const tool = registeredTools.find(t => t.name === "kg_resolve_question");
+      const result = await tool!.handler({
+        question_id: questionNode.id,
+        resolved_by_id: decisionNode.id,
+        resolution_note: "Decided to use Redis"
+      });
+      const data = JSON.parse(result.content[0].text);
+
+      expect(data.success).toBe(true);
+      expect(data.question.id).toBe(questionNode.id);
+      expect(data.resolvedBy.id).toBe(decisionNode.id);
+      expect(data.edge.relation).toBe("resolved_by");
+    });
+  });
+
   describe("Integration Tests", () => {
     it("should handle complete project workflow", async () => {
       // 1. Create project nodes
@@ -512,9 +596,9 @@ describe("Project Tools", () => {
 
       // 3. Session warmup
       const warmupTool = registeredTools.find(t => t.name === "kg_session_warmup");
-      const warmupResult = await warmupTool!.handler({ 
-        project: "test-project", 
-        limit: 5 
+      const warmupResult = await warmupTool!.handler({
+        project: "test-project",
+        limit: 5
       });
       const warmupData = JSON.parse(warmupResult.content[0].text);
 
@@ -522,16 +606,15 @@ describe("Project Tools", () => {
       expect(warmupData.blockers).toHaveLength(1);
 
       // 4. Get specific node
-      const getNodeTool = registeredTools.find(t => t.name === "kg_get_node");
-      const nodeResult = await getNodeTool!.handler({ id: decisionNode.id });
+      const nodeTool = registeredTools.find(t => t.name === "kg_node");
+      const nodeResult = await nodeTool!.handler({ operation: "get", id: decisionNode.id });
       const nodeData = JSON.parse(nodeResult.content[0].text);
 
       expect(nodeData.node.id).toBe(decisionNode.id);
       expect(nodeData.node.content).toBe("Decision: Use modular architecture");
 
       // 5. Delete node
-      const deleteTool = registeredTools.find(t => t.name === "kg_delete_node");
-      const deleteResult = await deleteTool!.handler({ id: questionNode.id });
+      const deleteResult = await nodeTool!.handler({ operation: "delete", id: questionNode.id });
       const deleteData = JSON.parse(deleteResult.content[0].text);
 
       expect(deleteData.success).toBe(true);
@@ -569,7 +652,7 @@ describe("Project Tools", () => {
       setupProjectTools(errorServer, errorStorage);
 
       const tool = registeredTools.find(t => t.name === "kg_get_project_state");
-      
+
       // Should not throw, but return error response
       await expect(tool!.handler({ project: "test-project" })).rejects.toThrow("Storage error");
     });
@@ -578,28 +661,30 @@ describe("Project Tools", () => {
   describe("Tool Registration", () => {
     it("should register all required project tools", () => {
       const toolNames = registeredTools.map(t => t.name);
-      
+
       expect(toolNames).toContain("kg_get_project_state");
       expect(toolNames).toContain("kg_session_warmup");
-      expect(toolNames).toContain("kg_get_node");
-      expect(toolNames).toContain("kg_delete_node");
+      expect(toolNames).toContain("kg_node");
       expect(toolNames).toContain("kg_capture_session");
-      
-      expect(toolNames).toHaveLength(5);
+      expect(toolNames).toContain("kg_open_questions");
+      expect(toolNames).toContain("kg_resolve_question");
+
+      expect(toolNames).toHaveLength(6);
     });
 
     it("should register tools with correct server", () => {
-      expect(mockServer.tool).toHaveBeenCalledTimes(5);
-      
+      expect(mockServer.tool).toHaveBeenCalledTimes(6);
+
       // Verify each tool was registered
       const calls = vi.mocked(mockServer.tool).mock.calls;
       const registeredNames = calls.map(call => call[0]);
-      
+
       expect(registeredNames).toContain("kg_get_project_state");
       expect(registeredNames).toContain("kg_session_warmup");
-      expect(registeredNames).toContain("kg_get_node");
-      expect(registeredNames).toContain("kg_delete_node");
+      expect(registeredNames).toContain("kg_node");
       expect(registeredNames).toContain("kg_capture_session");
+      expect(registeredNames).toContain("kg_open_questions");
+      expect(registeredNames).toContain("kg_resolve_question");
     });
   });
 

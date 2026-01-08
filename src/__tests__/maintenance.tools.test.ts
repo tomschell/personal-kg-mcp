@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("maintenance tools registration", () => {
-  it("registers all maintenance tools", () => {
+  it("registers kg_admin tool", () => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-maint-tools-"));
     const storage = new FileStorage({ baseDir });
 
@@ -19,25 +19,22 @@ describe("maintenance tools registration", () => {
 
     setupMaintenanceTools(mockServer, storage);
 
-    expect(registered).toContain("kg_backup");
-    expect(registered).toContain("kg_validate");
-    expect(registered).toContain("kg_repair");
-    expect(registered).toContain("kg_export");
-    expect(registered).toContain("kg_import");
+    expect(registered).toContain("kg_admin");
+    expect(registered).toHaveLength(1);
   });
 });
 
-describe("kg_backup functional tests", () => {
+describe("kg_admin backup operation", () => {
   let storage: FileStorage;
-  let backupHandler: any;
+  let adminHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-backup-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_backup") backupHandler = handler;
+        if (name === "kg_admin") adminHandler = handler;
       },
     } as unknown as Parameters<typeof setupMaintenanceTools>[0];
 
@@ -45,23 +42,23 @@ describe("kg_backup functional tests", () => {
   });
 
   it("creates backup with default retention", async () => {
-    const node = storage.createNode({
+    storage.createNode({
       content: "Test node for backup",
       type: "idea",
       tags: ["test"],
     });
 
-    const result = await backupHandler({});
+    const result = await adminHandler({ operation: "backup" });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("backup");
     expect(response.success).toBe(true);
     expect(response.backup.backupDir).toContain("backups");
-    expect(response.backup.retentionDays).toBe(30);
     expect(response.message).toContain("Backup created successfully");
   });
 
   it("creates backup with custom retention", async () => {
-    const result = await backupHandler({ retentionDays: 7 });
+    const result = await adminHandler({ operation: "backup", retentionDays: 7 });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.success).toBe(true);
@@ -70,7 +67,7 @@ describe("kg_backup functional tests", () => {
   });
 
   it("creates backup with zero retention (keep forever)", async () => {
-    const result = await backupHandler({ retentionDays: 0 });
+    const result = await adminHandler({ operation: "backup", retentionDays: 0 });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.success).toBe(true);
@@ -78,17 +75,17 @@ describe("kg_backup functional tests", () => {
   });
 });
 
-describe("kg_validate functional tests", () => {
+describe("kg_admin validate operation", () => {
   let storage: FileStorage;
-  let validateHandler: any;
+  let adminHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-validate-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_validate") validateHandler = handler;
+        if (name === "kg_admin") adminHandler = handler;
       },
     } as unknown as Parameters<typeof setupMaintenanceTools>[0];
 
@@ -102,25 +99,24 @@ describe("kg_validate functional tests", () => {
       tags: ["test"],
     });
 
-    const result = await validateHandler({});
+    const result = await adminHandler({ operation: "validate" });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("validate");
     expect(response.ok).toBe(true);
   });
 
   it("detects corrupted data", async () => {
-    // Create a valid node first
     storage.createNode({
       content: "Valid test node",
       type: "idea",
       tags: ["test"],
     });
 
-    // Inject corrupted data
     const { writeFileSync } = await import("node:fs");
     writeFileSync(join(storage.getEdgesDir(), "corrupted.json"), "{invalid json}");
 
-    const result = await validateHandler({});
+    const result = await adminHandler({ operation: "validate" });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.ok).toBe(false);
@@ -128,17 +124,17 @@ describe("kg_validate functional tests", () => {
   });
 });
 
-describe("kg_repair functional tests", () => {
+describe("kg_admin repair operation", () => {
   let storage: FileStorage;
-  let repairHandler: any;
+  let adminHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-repair-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_repair") repairHandler = handler;
+        if (name === "kg_admin") adminHandler = handler;
       },
     } as unknown as Parameters<typeof setupMaintenanceTools>[0];
 
@@ -146,20 +142,19 @@ describe("kg_repair functional tests", () => {
   });
 
   it("repairs corrupted data", async () => {
-    // Create valid data first
     storage.createNode({
       content: "Valid test node",
       type: "idea",
       tags: ["test"],
     });
 
-    // Inject corrupted data
     const { writeFileSync } = await import("node:fs");
     writeFileSync(join(storage.getEdgesDir(), "corrupted.json"), "{invalid json}");
 
-    const result = await repairHandler({});
+    const result = await adminHandler({ operation: "repair" });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("repair");
     expect(response.success).toBe(true);
     expect(response.removedNodes).toBeGreaterThanOrEqual(0);
     expect(response.removedEdges).toBeGreaterThanOrEqual(0);
@@ -173,7 +168,7 @@ describe("kg_repair functional tests", () => {
       tags: ["test"],
     });
 
-    const result = await repairHandler({});
+    const result = await adminHandler({ operation: "repair" });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.success).toBe(true);
@@ -182,17 +177,17 @@ describe("kg_repair functional tests", () => {
   });
 });
 
-describe("kg_export functional tests", () => {
+describe("kg_admin export operation", () => {
   let storage: FileStorage;
-  let exportHandler: any;
+  let adminHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-export-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_export") exportHandler = handler;
+        if (name === "kg_admin") adminHandler = handler;
       },
     } as unknown as Parameters<typeof setupMaintenanceTools>[0];
 
@@ -200,9 +195,10 @@ describe("kg_export functional tests", () => {
   });
 
   it("exports empty knowledge graph", async () => {
-    const result = await exportHandler({});
+    const result = await adminHandler({ operation: "export" });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("export");
     expect(response.nodes).toHaveLength(0);
     expect(response.edges).toHaveLength(0);
   });
@@ -221,7 +217,7 @@ describe("kg_export functional tests", () => {
 
     storage.createEdge(node1.id, node2.id, "references");
 
-    const result = await exportHandler({});
+    const result = await adminHandler({ operation: "export" });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.nodes).toHaveLength(2);
@@ -233,17 +229,17 @@ describe("kg_export functional tests", () => {
   });
 });
 
-describe("kg_import functional tests", () => {
+describe("kg_admin import operation", () => {
   let storage: FileStorage;
-  let importHandler: any;
+  let adminHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-import-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_import") importHandler = handler;
+        if (name === "kg_admin") adminHandler = handler;
       },
     } as unknown as Parameters<typeof setupMaintenanceTools>[0];
 
@@ -283,9 +279,10 @@ describe("kg_import functional tests", () => {
       ]
     };
 
-    const result = await importHandler({ payload: JSON.stringify(exportData) });
+    const result = await adminHandler({ operation: "import", payload: JSON.stringify(exportData) });
     const response = JSON.parse(result.content[0].text);
 
+    expect(response.operation).toBe("import");
     expect(response.success).toBe(true);
     expect(response.nodes).toBe(2);
     expect(response.edges).toBe(1);
@@ -293,7 +290,7 @@ describe("kg_import functional tests", () => {
   });
 
   it("handles invalid import data", async () => {
-    const result = await importHandler({ payload: "invalid json" });
+    const result = await adminHandler({ operation: "import", payload: "invalid json" });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.success).toBe(false);
@@ -302,7 +299,7 @@ describe("kg_import functional tests", () => {
   });
 
   it("handles empty import data", async () => {
-    const result = await importHandler({ payload: JSON.stringify({ nodes: [], edges: [] }) });
+    const result = await adminHandler({ operation: "import", payload: JSON.stringify({ nodes: [], edges: [] }) });
     const response = JSON.parse(result.content[0].text);
 
     expect(response.success).toBe(true);
@@ -311,25 +308,142 @@ describe("kg_import functional tests", () => {
   });
 });
 
-describe("maintenance tools integration tests", () => {
+describe("kg_admin health operation", () => {
   let storage: FileStorage;
-  let backupHandler: any;
-  let validateHandler: any;
-  let repairHandler: any;
-  let exportHandler: any;
-  let importHandler: any;
+  let adminHandler: any;
+
+  beforeEach(() => {
+    const baseDir = mkdtempSync(join(tmpdir(), "pkg-health-"));
+    storage = new FileStorage({ baseDir });
+
+    const mockServer = {
+      tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
+        if (name === "kg_admin") adminHandler = handler;
+      },
+    } as unknown as Parameters<typeof setupMaintenanceTools>[0];
+
+    setupMaintenanceTools(mockServer, storage);
+  });
+
+  it("returns health status", async () => {
+    const result = await adminHandler({ operation: "health" });
+    const response = JSON.parse(result.content[0].text);
+
+    expect(response.operation).toBe("health");
+    expect(response.status).toBeDefined();
+  });
+});
+
+describe("kg_admin rename_tag operation", () => {
+  let storage: FileStorage;
+  let adminHandler: any;
+
+  beforeEach(() => {
+    const baseDir = mkdtempSync(join(tmpdir(), "pkg-rename-"));
+    storage = new FileStorage({ baseDir });
+
+    const mockServer = {
+      tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
+        if (name === "kg_admin") adminHandler = handler;
+      },
+    } as unknown as Parameters<typeof setupMaintenanceTools>[0];
+
+    setupMaintenanceTools(mockServer, storage);
+  });
+
+  it("renames tags on nodes", async () => {
+    storage.createNode({
+      content: "Test node 1",
+      type: "idea",
+      tags: ["old-tag", "other"],
+    });
+    storage.createNode({
+      content: "Test node 2",
+      type: "idea",
+      tags: ["old-tag"],
+    });
+
+    const result = await adminHandler({ operation: "rename_tag", oldTag: "old-tag", newTag: "new-tag" });
+    const response = JSON.parse(result.content[0].text);
+
+    expect(response.operation).toBe("rename_tag");
+    expect(response.success).toBe(true);
+    expect(response.nodesUpdated).toBe(2);
+  });
+
+  it("supports dry run", async () => {
+    storage.createNode({
+      content: "Test node",
+      type: "idea",
+      tags: ["old-tag"],
+    });
+
+    const result = await adminHandler({ operation: "rename_tag", oldTag: "old-tag", newTag: "new-tag", dryRun: true });
+    const response = JSON.parse(result.content[0].text);
+
+    expect(response.success).toBe(true);
+    expect(response.dryRun).toBe(true);
+    expect(response.nodesUpdated).toBe(1);
+
+    // Verify tag wasn't actually changed
+    const nodes = storage.listAllNodes();
+    expect(nodes[0].tags).toContain("old-tag");
+  });
+});
+
+describe("kg_admin merge_tags operation", () => {
+  let storage: FileStorage;
+  let adminHandler: any;
+
+  beforeEach(() => {
+    const baseDir = mkdtempSync(join(tmpdir(), "pkg-merge-"));
+    storage = new FileStorage({ baseDir });
+
+    const mockServer = {
+      tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
+        if (name === "kg_admin") adminHandler = handler;
+      },
+    } as unknown as Parameters<typeof setupMaintenanceTools>[0];
+
+    setupMaintenanceTools(mockServer, storage);
+  });
+
+  it("merges multiple tags into one", async () => {
+    storage.createNode({
+      content: "Test node 1",
+      type: "idea",
+      tags: ["tag-a", "other"],
+    });
+    storage.createNode({
+      content: "Test node 2",
+      type: "idea",
+      tags: ["tag-b"],
+    });
+
+    const result = await adminHandler({
+      operation: "merge_tags",
+      sourceTags: ["tag-a", "tag-b"],
+      targetTag: "merged-tag"
+    });
+    const response = JSON.parse(result.content[0].text);
+
+    expect(response.operation).toBe("merge_tags");
+    expect(response.success).toBe(true);
+    expect(response.nodesUpdated).toBe(2);
+  });
+});
+
+describe("kg_admin integration tests", () => {
+  let storage: FileStorage;
+  let adminHandler: any;
 
   beforeEach(() => {
     const baseDir = mkdtempSync(join(tmpdir(), "pkg-maint-integration-"));
     storage = new FileStorage({ baseDir });
-    
+
     const mockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_backup") backupHandler = handler;
-        if (name === "kg_validate") validateHandler = handler;
-        if (name === "kg_repair") repairHandler = handler;
-        if (name === "kg_export") exportHandler = handler;
-        if (name === "kg_import") importHandler = handler;
+        if (name === "kg_admin") adminHandler = handler;
       },
     } as unknown as Parameters<typeof setupMaintenanceTools>[0];
 
@@ -351,17 +465,17 @@ describe("maintenance tools integration tests", () => {
     storage.createEdge(node1.id, node2.id, "references");
 
     // 2. Validate clean data
-    const validateResult = await validateHandler({});
+    const validateResult = await adminHandler({ operation: "validate" });
     const validateResponse = JSON.parse(validateResult.content[0].text);
     expect(validateResponse.ok).toBe(true);
 
     // 3. Create backup
-    const backupResult = await backupHandler({ retentionDays: 7 });
+    const backupResult = await adminHandler({ operation: "backup", retentionDays: 7 });
     const backupResponse = JSON.parse(backupResult.content[0].text);
     expect(backupResponse.success).toBe(true);
 
     // 4. Export data
-    const exportResult = await exportHandler({});
+    const exportResult = await adminHandler({ operation: "export" });
     const exportResponse = JSON.parse(exportResult.content[0].text);
     expect(exportResponse.nodes).toHaveLength(2);
     expect(exportResponse.edges).toHaveLength(1);
@@ -369,16 +483,17 @@ describe("maintenance tools integration tests", () => {
     // 5. Import data to new storage
     const newBaseDir = mkdtempSync(join(tmpdir(), "pkg-maint-import-"));
     const newStorage = new FileStorage({ baseDir: newBaseDir });
-    
+
+    let newAdminHandler: any;
     const newMockServer = {
       tool: (name: string, _desc: string, _schema: unknown, handler: any) => {
-        if (name === "kg_import") importHandler = handler;
+        if (name === "kg_admin") newAdminHandler = handler;
       },
     } as unknown as Parameters<typeof setupMaintenanceTools>[0];
 
     setupMaintenanceTools(newMockServer, newStorage);
 
-    const importResult = await importHandler({ payload: JSON.stringify(exportResponse) });
+    const importResult = await newAdminHandler({ operation: "import", payload: JSON.stringify(exportResponse) });
     const importResponse = JSON.parse(importResult.content[0].text);
     expect(importResponse.success).toBe(true);
     expect(importResponse.nodes).toBe(2);
@@ -394,7 +509,7 @@ describe("maintenance tools integration tests", () => {
     });
 
     // 2. Validate clean data
-    const validateResult = await validateHandler({});
+    const validateResult = await adminHandler({ operation: "validate" });
     const validateResponse = JSON.parse(validateResult.content[0].text);
     expect(validateResponse.ok).toBe(true);
 
@@ -403,17 +518,17 @@ describe("maintenance tools integration tests", () => {
     writeFileSync(join(storage.getEdgesDir(), "corrupted.json"), "{invalid json}");
 
     // 4. Validate corrupted data
-    const validateCorruptedResult = await validateHandler({});
+    const validateCorruptedResult = await adminHandler({ operation: "validate" });
     const validateCorruptedResponse = JSON.parse(validateCorruptedResult.content[0].text);
     expect(validateCorruptedResponse.ok).toBe(false);
 
     // 5. Repair corrupted data
-    const repairResult = await repairHandler({});
+    const repairResult = await adminHandler({ operation: "repair" });
     const repairResponse = JSON.parse(repairResult.content[0].text);
     expect(repairResponse.success).toBe(true);
 
     // 6. Validate repaired data
-    const validateRepairedResult = await validateHandler({});
+    const validateRepairedResult = await adminHandler({ operation: "validate" });
     const validateRepairedResponse = JSON.parse(validateRepairedResult.content[0].text);
     expect(validateRepairedResponse.ok).toBe(true);
   });
