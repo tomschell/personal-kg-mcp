@@ -78,32 +78,6 @@ Add to capture decisions automatically when Claude stops:
 }
 ```
 
-## Contradiction Detection
-
-Contradiction detection is automatic! When you capture a decision using kg_capture:
-
-1. System searches for similar past decisions
-2. If contradictions detected (>50% likelihood), warnings are returned
-3. A `conflicts_with` edge is created between the nodes
-
-Example output:
-```json
-{
-  "accepted": true,
-  "node": { ... },
-  "warnings": [{
-    "type": "potential_contradiction",
-    "likelihood": 0.75,
-    "conflictsWith": {
-      "id": "abc123",
-      "snippet": "Previously decided to use PostgreSQL for..."
-    },
-    "reasons": ["Rejects what was previously adopted: postgresql"]
-  }],
-  "message": "Warning: 1 potential contradiction(s) detected with past decisions."
-}
-```
-
 ## Testing the Features
 
 1. **Test context retrieval:**
@@ -117,9 +91,8 @@ Example output:
    kg_open_questions(project="my-app")
    ```
 
-3. **Test contradiction detection:**
+3. **Resolve a question:**
    ```
-   kg_capture(content="Decided to use PostgreSQL for the database", type="decision")
-   kg_capture(content="Decided to avoid PostgreSQL and use MongoDB instead", type="decision")
-   # Second capture should show contradiction warning
+   kg_capture(content="Decided to use Redis for caching due to better pub/sub support", type="decision", project="my-app")
+   kg_resolve_question(question_id="<question-id>", resolved_by_id="<decision-id>")
    ```
