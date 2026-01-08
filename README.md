@@ -152,18 +152,18 @@ npm install @tomschell/personal-kg-mcp
 
 ### Basic Usage
 
-Start with these 8 essential tools:
+Start with these essential tools:
 
 | Purpose | Tool |
 |---------|------|
-| Health check | `kg_health` |
 | Session warmup | `kg_session_warmup` |
 | Capture decisions/progress | `kg_capture` |
 | Session summaries | `kg_capture_session` |
-| Search | `kg_semantic_search` |
+| Search | `kg_search` (mode: semantic) |
 | Project overview | `kg_get_project_state` |
-| Recent activity | `kg_list_recent` |
-| Link nodes | `kg_create_edge` |
+| Get context | `kg_get_relevant_context` |
+| Track questions | `kg_open_questions` |
+| Link nodes | `kg_edges` (operation: create) |
 
 ## Configuration
 
@@ -260,50 +260,55 @@ Users benefit from these reminders indirectly through improved agent behavior, n
 ### Proactive Behavior
 1. Capture key moments with **kg_capture** (decisions, progress, insights, questions).
 2. At session boundaries use **kg_capture_session** (include `next_actions[]`).
-3. When resuming a topic call **kg_query_context** or **kg_get_project_state**.
-4. Link entries to the active session and mark dependencies with **kg_create_edge**.
+3. When resuming a topic call **kg_get_relevant_context** or **kg_get_project_state**.
+4. Track open questions with **kg_open_questions** and resolve with **kg_resolve_question**.
+5. Link entries with **kg_edges** (operation: "create", relation: "blocks" or "derived_from").
 
 ### Core Tools
-
-#### Health
-| Tool | Purpose |
-|------|---------|
-| **kg_health** | Confirm MCP server availability |
 
 #### Capture
 | Tool | Args (required **bold**) | Notes |
 |------|--------------------------|-------|
-| **kg_capture** | **content**, type∈idea\|decision\|progress\|insight\|question, tags?, visibility?, includeGit?, importance∈high\|medium\|low, auto_link?, sessionId?, project?, workstream?, ticket? | Primary knowledge creation |
-| **kg_capture_session** | **summary**, duration?, artifacts?, **next_actions[]**, visibility?, importance? | Session summaries |
-
-#### Relationships
-| Tool | Args | Notes |
-|------|------|-------|
-| **kg_create_edge** | **fromNodeId**, **toNodeId**, **relation**∈references\|relates_to\|derived_from\|blocks\|duplicates | Single relationship creation |
-| **kg_list_edges** | nodeId? | |
-| **kg_link_session** | **sessionId**, **nodeId** | Link a session to a node (session → node, references) |
+| **kg_capture** | **content**, type, tags?, project?, workstream?, ticket?, importance?, visibility?, includeGit?, auto_link?, sessionId? | Primary knowledge creation |
+| **kg_capture_session** | **summary**, duration?, artifacts?, next_actions[], visibility?, importance? | Session summaries |
+| **kg_link_session** | **sessionId**, **nodeId** | Link session to node |
+| **kg_update_node** | **id**, content?, tags?, importance?, visibility? | Update existing nodes |
 
 #### Search & Retrieval
 | Tool | Args | Notes |
 |------|------|-------|
-| **kg_semantic_search** | **query**, limit? | Vector similarity |
-| **kg_search** | query?, tags?, type?, limit?, format?, includeContent?, includeTags?, includeMetadata?, summaryLength? | Keyword/tag search with optional formatting |
-| **kg_list_recent** | limit, format?, summaryLength? | Recent activity |
-| **kg_get_node** | **id** | |
-| **kg_query_context** | **topic** | Summarise topic-relevant nodes |
-| **kg_get_project_state** | **project**, includeRecent? | Overview, blockers, recent etc. |
-| **kg_session_warmup** | **project**, limit? | Session context warmup |
-| **kg_find_similar** | **nodeId**, limit? | Find similar nodes |
+| **kg_search** | **query**, mode∈text\|semantic\|time_range, tags?, type?, limit?, threshold? | Unified search |
+| **kg_query_context** | **topic** | Summarize topic-relevant nodes |
+| **kg_get_relevant_context** | **query**, project?, max_items?, include_questions? | Proactive context injection |
+| **kg_get_project_state** | **project** | Overview, blockers, decisions |
+| **kg_session_warmup** | project?, workstream?, limit?, discover? | Session context warmup |
+| **kg_list_tags** | prefix?, minCount?, limit? | List all tags with counts |
 
-#### Maintenance & Data
+#### Node Operations
 | Tool | Args | Notes |
 |------|------|-------|
-| **kg_relationships_maintenance** | rebuildThreshold?, pruneThreshold?, limit? | Rebuild + prune relationships |
-| **kg_validate** |  | Structural check |
-| **kg_repair** |  | Auto-fix minor issues |
-| **kg_backup** | retentionDays? | Zip export w/ retention policy |
-| **kg_export / kg_import** | (payload) | Full JSON export / import |
-| **kg_graph_export** |  | Mermaid-compatible graph |
+| **kg_node** | **operation**∈get\|delete\|find_similar, **id**, deleteEdges?, limit?, threshold? | Unified node ops |
+
+#### Relationships
+| Tool | Args | Notes |
+|------|------|-------|
+| **kg_edges** | **operation**∈create\|list\|maintain, fromNodeId?, toNodeId?, relation?, nodeId?, maintainOp? | Unified edge ops |
+
+#### Question Tracking
+| Tool | Args | Notes |
+|------|------|-------|
+| **kg_open_questions** | project?, include_stale?, limit? | List unresolved questions |
+| **kg_resolve_question** | **question_id**, **resolved_by_id**, resolution_note? | Mark question resolved |
+
+#### Admin & Maintenance
+| Tool | Args | Notes |
+|------|------|-------|
+| **kg_admin** | **operation**∈health\|backup\|validate\|repair\|export\|import\|rename_tag\|merge_tags, ... | Unified admin ops |
+
+#### Analysis
+| Tool | Args | Notes |
+|------|------|-------|
+| **kg_analyze** | **operation**∈clusters\|emerging\|path\|graph_export, limit?, threshold?, startId?, endId? | Unified analysis ops |
 
 ### Relationship Type Guide
 | Relation | When to use | Example |
@@ -315,11 +320,54 @@ Users benefit from these reminders indirectly through improved agent behavior, n
 | duplicates | Identical or redundant content | Duplicate question captured twice |
 
 ### Best-Practice Flow
-1. **Start / resume** → `kg_health`, then `kg_session_warmup({ project: "kg", limit: 20 })`  
-2. **Before starting work** → `kg_query_context` to get relevant background
-3. **During dev** → `kg_capture` with `sessionId` + tags  
-4. **Link related work** → `kg_create_edge` (relation="blocks" or "derived_from")  
-5. **End session** → `kg_capture_session`, then `kg_relationships_maintenance`
+1. **Start / resume** → `kg_session_warmup({ project: "my-project" })` (discovery mode if no project)
+2. **Before starting work** → `kg_get_relevant_context({ query: "topic" })` for background
+3. **During dev** → `kg_capture` decisions, progress, insights, questions
+4. **Track questions** → `kg_open_questions` to see unresolved items
+5. **Link related work** → `kg_edges({ operation: "create", ... })`
+6. **End session** → `kg_capture_session` with summary and next_actions
+
+## Claude Code Integration
+
+Add these instructions to your project's `CLAUDE.md` to enable automatic knowledge graph usage:
+
+```markdown
+## Knowledge Graph
+
+This project uses personal-kg-mcp for decision tracking and context management.
+
+### Session Start
+- Run `kg_session_warmup` with project name at the start of each session
+- Use discovery mode (no project) to see all available projects
+
+### During Work
+- Capture important decisions with `kg_capture` (type: "decision")
+- Log progress on features with `kg_capture` (type: "progress")
+- Record insights and learnings with `kg_capture` (type: "insight")
+- Track open questions with `kg_capture` (type: "question")
+
+### Context Retrieval
+- Use `kg_get_relevant_context` before starting work on a topic
+- Check `kg_open_questions` for unresolved items
+- Use `kg_query_context` for topic summaries
+
+### Session End
+- Summarize work with `kg_capture_session`
+- Include `next_actions` for continuity
+```
+
+### Recommended CLAUDE.md Snippet
+
+For projects using personal-kg-mcp, add to your `CLAUDE.md`:
+
+```markdown
+## Knowledge Graph
+- **MCP Server**: personal-kg-mcp
+- **Storage**: `.kg/` (gitignored)
+- **Usage**: Capture decisions, track questions, maintain context across sessions
+- **Session Start**: Always run `kg_session_warmup` with project name
+- **Key Tools**: kg_capture, kg_session_warmup, kg_get_relevant_context, kg_open_questions
+```
 
 ### Examples
 
@@ -360,8 +408,9 @@ Users benefit from these reminders indirectly through improved agent behavior, n
 #### Link Related Work
 ```json
 {
-  "tool": "kg_create_edge",
+  "tool": "kg_edges",
   "args": {
+    "operation": "create",
     "fromNodeId": "<decisionId>",
     "toNodeId": "<taskId>",
     "relation": "blocks"
@@ -377,15 +426,23 @@ Users benefit from these reminders indirectly through improved agent behavior, n
 }
 ```
 
-## Advanced Tools (Reference Only)
+## Consolidated Tools (v3.0)
 
-These tools are available but rarely needed:
+Tools have been consolidated for easier use:
 
-- `kg_find_connection_path` - Find relationship path between nodes
-- `kg_detect_topic_clusters` - Discover clusters/themes
-- `kg_find_emerging_concepts` - Detect new concepts over time
-- `kg_query_time_range` - Time-window queries
-- `kg_delete_node` - Delete nodes with edge cleanup
+| Tool | Operations | Description |
+|------|------------|-------------|
+| `kg_analyze` | clusters, emerging, path, graph_export | Analysis operations |
+| `kg_admin` | health, backup, validate, repair, export, import, rename_tag, merge_tags | Admin/maintenance |
+| `kg_edges` | create, list, maintain | Relationship management |
+| `kg_node` | get, delete, find_similar | Node operations |
+| `kg_search` | text, semantic, time_range | Unified search |
+
+### New Features
+
+- `kg_open_questions` - Track unresolved questions with staleness detection
+- `kg_resolve_question` - Mark questions as resolved
+- `kg_get_relevant_context` - Proactive context injection for queries
 
 
 
