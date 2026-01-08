@@ -69,6 +69,9 @@ export class FileStorage {
                 set.add(t);
             node.tags = Array.from(set);
         }
+        if (Array.isArray(changes.removeTags) && changes.removeTags.length > 0) {
+            node.tags = node.tags.filter((t) => !changes.removeTags.includes(t));
+        }
         if (changes.visibility)
             node.visibility = changes.visibility;
         if (changes.importance)
@@ -244,15 +247,34 @@ export class FileStorage {
         mkdirSync(quarantine, { recursive: true });
         let removedNodes = 0;
         let removedEdges = 0;
-        // Nodes
+        let migratedNodes = 0;
+        // Nodes - try to auto-fix before quarantining
         for (const f of readdirSync(this.nodesDir)) {
             if (!f.endsWith(".json"))
                 continue;
             const p = join(this.nodesDir, f);
             try {
-                KnowledgeNodeSchema.parse(JSON.parse(readFileSync(p, "utf8")));
+                const raw = JSON.parse(readFileSync(p, "utf8"));
+                // Try to fix common missing fields
+                let modified = false;
+                if (!raw.visibility) {
+                    raw.visibility = "private";
+                    modified = true;
+                }
+                if (!raw.tags) {
+                    raw.tags = [];
+                    modified = true;
+                }
+                // Validate after fixes
+                KnowledgeNodeSchema.parse(raw);
+                // If we modified, save the fixed version
+                if (modified) {
+                    writeFileSync(p, JSON.stringify(raw, null, 2), "utf8");
+                    migratedNodes++;
+                }
             }
             catch {
+                // Still invalid after fixes - quarantine
                 cpSync(p, join(quarantine, f));
                 rmSync(p);
                 removedNodes++;
@@ -272,6 +294,6 @@ export class FileStorage {
                 removedEdges++;
             }
         }
-        return { removedNodes, removedEdges, quarantinedDir: quarantine };
+        return { removedNodes, removedEdges, migratedNodes, quarantinedDir: quarantine };
     }
 }

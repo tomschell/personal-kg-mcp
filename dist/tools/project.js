@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getGitHubState, getCurrentBranch } from "../utils/github.js";
 import { isGitHubEnabled } from "../config/KGConfig.js";
 import { selectSmartContext } from "../utils/sessionContext.js";
+import { embedText, cosineSimilarity } from "../utils/embeddings.js";
 async function getAvailableProjects(storage) {
     const allNodes = storage.searchNodes({ limit: 1000 }); // Get all nodes for analysis
     // Extract all project tags
@@ -264,8 +265,11 @@ export function setupProjectTools(server, storage) {
             sessionStart: new Date().toISOString(),
             // NEW: GitHub state integration
             githubState,
-            // NEW: Workflow reminders for commit frequency
-            workflowReminders: {
+            // IMPORTANT: Agent Training Reminders (NOT user-facing documentation)
+            // These reminders train AI agents on proper development workflows during sessions.
+            // They guide agent behavior for commit patterns, code quality, and best practices.
+            // Users see these indirectly through improved agent behavior, not as direct guidance.
+            agentTrainingReminders: {
                 commitFrequency: [
                     "🔄 Commit frequently - git hooks provide valuable feedback during development",
                     "💡 Target: Commit after each logical change, not just at completion",
@@ -285,78 +289,42 @@ export function setupProjectTools(server, storage) {
             ],
         };
     });
-    // Get specific node
-    server.tool("kg_get_node", "Retrieves a specific knowledge node by its unique ID. Use to fetch detailed information about a particular node including its content, metadata, tags, and relationships.", {
-        id: z.string().describe("Unique identifier of the knowledge node to retrieve"),
-    }, async ({ id }) => {
-        logToolCall("kg_get_node", { id });
-        const node = storage.getNode(id);
-        if (!node) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify({ error: "Node not found" }, null, 2),
-                    },
-                ],
-            };
+    // =============================================================================
+    // CONSOLIDATED NODE TOOL
+    // Replaces: kg_get_node, kg_delete_node, kg_find_similar
+    // =============================================================================
+    server.tool("kg_node", "Unified tool for node operations. Supports three operations: 'get' to retrieve a node with its relationships, 'delete' to remove a node, 'find_similar' to find semantically similar nodes.", {
+        operation: z.enum(["get", "delete", "find_similar"])
+            .describe("Operation to perform: 'get' retrieves node details, 'delete' removes the node, 'find_similar' finds similar nodes."),
+        id: z.string()
+            .describe("ID of the knowledge node to operate on."),
+        // delete operation options
+        deleteEdges: z.boolean().default(true).optional()
+            .describe("[delete] Whether to also delete all relationships connected to this node."),
+        // find_similar operation options
+        limit: z.number().int().min(1).max(50).default(10).optional()
+            .describe("[find_similar] Maximum number of similar nodes to return."),
+        threshold: z.number().min(0).max(1).default(0.15).optional()
+            .describe("[find_similar] Minimum similarity score (0-1). Higher = stricter matching."),
+    }, async ({ operation, id, deleteEdges = true, limit = 10, threshold = 0.15 }) => {
+        logToolCall("kg_node", { operation, id, deleteEdges, limit, threshold });
+        switch (operation) {
+            case "get":
+                return handleGetNode(storage, id);
+            case "delete":
+                return handleDeleteNode(storage, id, deleteEdges);
+            case "find_similar":
+                return handleFindSimilar(storage, id, limit, threshold);
+            default:
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: JSON.stringify({ error: `Unknown operation: ${operation}` }, null, 2),
+                        },
+                    ],
+                };
         }
-        const edges = storage.listEdges(id);
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: JSON.stringify({ node, relationships: edges }, null, 2),
-                },
-            ],
-        };
-    });
-    // Delete node
-    server.tool("kg_delete_node", "Removes a knowledge node and optionally its relationships from the graph. Use to clean up outdated, incorrect, or redundant information.", {
-        id: z.string().describe("ID of the knowledge node to delete"),
-        deleteEdges: z.boolean().default(true).describe("Whether to also delete all relationships connected to this node"),
-    }, async ({ id, deleteEdges }) => {
-        logToolCall("kg_delete_node", { id, deleteEdges });
-        const node = storage.getNode(id);
-        if (!node) {
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify({ error: "Node not found" }, null, 2),
-                    },
-                ],
-            };
-        }
-        let deletedEdgesCount = 0;
-        if (deleteEdges) {
-            deletedEdgesCount = storage.deleteEdgesForNode(id);
-        }
-        storage.deleteNode(id);
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: JSON.stringify({
-                        success: true,
-                        deletedNode: id,
-                        deletedEdges: deletedEdgesCount
-                    }, null, 2),
-                },
-            ],
-        };
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: JSON.stringify({
-                        success: true,
-                        deletedNode: id,
-                        deletedEdges: deleteEdges ? "all" : "none"
-                    }, null, 2),
-                },
-            ],
-        };
     });
     // Session capture tool
     server.tool("kg_capture_session", "Captures session summaries with structured metadata. Use at the end of work sessions to record what was accomplished, artifacts created, and next actions. Essential for maintaining context between sessions and tracking progress over time.", {
@@ -396,6 +364,278 @@ export function setupProjectTools(server, storage) {
                 {
                     type: "text",
                     text: JSON.stringify({ accepted: true, node }, null, 2),
+                },
+            ],
+        };
+    });
+}
+// =============================================================================
+// NODE OPERATION HANDLERS
+// =============================================================================
+async function handleGetNode(storage, id) {
+    const node = storage.getNode(id);
+    if (!node) {
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ error: "Node not found" }, null, 2),
+                },
+            ],
+        };
+    }
+    const edges = storage.listEdges(id);
+    return {
+        content: [
+            {
+                type: "text",
+                text: JSON.stringify({ operation: "get", node, relationships: edges }, null, 2),
+            },
+        ],
+    };
+}
+async function handleDeleteNode(storage, id, deleteEdges) {
+    const node = storage.getNode(id);
+    if (!node) {
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ error: "Node not found" }, null, 2),
+                },
+            ],
+        };
+    }
+    let deletedEdgesCount = 0;
+    if (deleteEdges) {
+        deletedEdgesCount = storage.deleteEdgesForNode(id);
+    }
+    storage.deleteNode(id);
+    return {
+        content: [
+            {
+                type: "text",
+                text: JSON.stringify({
+                    operation: "delete",
+                    success: true,
+                    deletedNode: id,
+                    deletedEdges: deletedEdgesCount
+                }, null, 2),
+            },
+        ],
+    };
+}
+async function handleFindSimilar(storage, id, limit, threshold) {
+    const base = storage.getNode(id);
+    if (!base) {
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({ error: "Node not found", results: [] }, null, 2),
+                },
+            ],
+        };
+    }
+    const v = embedText(base.content);
+    const nodes = storage.listAllNodes().filter((n) => n.id !== id);
+    const scored = nodes.map((n) => ({
+        node: n,
+        score: cosineSimilarity(v, embedText(n.content)),
+    }));
+    scored.sort((a, b) => b.score - a.score);
+    const results = scored
+        .filter((r) => r.score >= threshold)
+        .slice(0, limit)
+        .map((r) => ({
+        id: r.node.id,
+        score: r.score,
+        snippet: r.node.content.slice(0, 160),
+    }));
+    return {
+        content: [
+            {
+                type: "text",
+                text: JSON.stringify({ operation: "find_similar", total: results.length, results }, null, 2),
+            },
+        ],
+    };
+}
+// =============================================================================
+// QUESTION TRACKING TOOLS
+// =============================================================================
+function daysSince(isoDate) {
+    const then = new Date(isoDate).getTime();
+    const now = Date.now();
+    return Math.floor((now - then) / (1000 * 60 * 60 * 24));
+}
+export function setupQuestionTools(server, storage) {
+    // Open Questions Tracker
+    server.tool("kg_open_questions", "Lists unresolved questions with aging information. Questions are considered 'stale' after 3 days. Use to track what needs follow-up and identify forgotten questions.", {
+        project: z.string().optional()
+            .describe("Filter by project name (will be normalized to 'proj:project-name' format)"),
+        include_stale: z.boolean().default(true)
+            .describe("Include questions older than 3 days (marked as stale)"),
+        limit: z.number().int().min(1).max(50).default(10)
+            .describe("Maximum number of questions to return"),
+    }, async ({ project, include_stale, limit }) => {
+        logToolCall("kg_open_questions", { project, include_stale, limit });
+        // Build search params
+        const tags = [];
+        if (project) {
+            tags.push(`proj:${project.toLowerCase().replace(/\s+/g, "-")}`);
+        }
+        // Get all questions
+        const questions = storage.searchNodes({
+            type: "question",
+            tags: tags.length > 0 ? tags : undefined,
+            limit: 200, // Get more to filter
+        });
+        // Check which have resolution edges
+        const unresolved = questions.filter(q => {
+            const edges = storage.listEdges(q.id);
+            return !edges.some(e => e.relation === "resolved_by");
+        });
+        // Calculate staleness and add metadata
+        const withAge = unresolved.map(q => {
+            const ageInDays = daysSince(q.createdAt);
+            return {
+                id: q.id,
+                content: q.content,
+                tags: q.tags,
+                importance: q.importance || "medium",
+                createdAt: q.createdAt,
+                ageInDays,
+                isStale: ageInDays > 3,
+                ageLabel: ageInDays === 0 ? "today" :
+                    ageInDays === 1 ? "yesterday" :
+                        `${ageInDays} days ago`,
+            };
+        });
+        // Filter by staleness if needed
+        const filtered = include_stale
+            ? withAge
+            : withAge.filter(q => !q.isStale);
+        // Sort by age (oldest first for attention)
+        const sorted = filtered.sort((a, b) => b.ageInDays - a.ageInDays);
+        const results = sorted.slice(0, limit);
+        // Summary stats
+        const staleCount = withAge.filter(q => q.isStale).length;
+        const freshCount = withAge.filter(q => !q.isStale).length;
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({
+                        total: results.length,
+                        summary: {
+                            staleQuestions: staleCount,
+                            freshQuestions: freshCount,
+                            oldestDays: results[0]?.ageInDays || 0,
+                        },
+                        questions: results,
+                        tip: staleCount > 0
+                            ? `${staleCount} question(s) are stale (>3 days). Consider resolving or updating them.`
+                            : "All questions are fresh!",
+                    }, null, 2),
+                },
+            ],
+        };
+    });
+    // Resolve Question Tool
+    server.tool("kg_resolve_question", "Marks a question as resolved by linking it to a decision, insight, or other node that answers it. Creates a 'resolved_by' relationship.", {
+        question_id: z.string()
+            .describe("ID of the question node to resolve"),
+        resolved_by_id: z.string()
+            .describe("ID of the node that resolves this question (typically a decision or insight)"),
+        resolution_note: z.string().optional()
+            .describe("Optional note explaining how this resolves the question"),
+    }, async ({ question_id, resolved_by_id, resolution_note }) => {
+        logToolCall("kg_resolve_question", { question_id, resolved_by_id, resolution_note });
+        // Validate question exists and is a question
+        const question = storage.getNode(question_id);
+        if (!question) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify({ error: "Question not found", success: false }, null, 2),
+                    },
+                ],
+            };
+        }
+        if (question.type !== "question") {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify({
+                            error: `Node is not a question (type: ${question.type})`,
+                            success: false,
+                        }, null, 2),
+                    },
+                ],
+            };
+        }
+        // Validate resolution node exists
+        const resolution = storage.getNode(resolved_by_id);
+        if (!resolution) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify({ error: "Resolution node not found", success: false }, null, 2),
+                    },
+                ],
+            };
+        }
+        // Check if already resolved
+        const existingEdges = storage.listEdges(question_id);
+        const alreadyResolved = existingEdges.find(e => e.relation === "resolved_by");
+        if (alreadyResolved) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: JSON.stringify({
+                            warning: "Question was already resolved",
+                            existingResolution: alreadyResolved.toNodeId,
+                            success: false,
+                        }, null, 2),
+                    },
+                ],
+            };
+        }
+        // Create resolution edge
+        const edge = storage.createEdge(question_id, resolved_by_id, "resolved_by", {
+            strength: 1.0,
+            evidence: resolution_note ? [resolution_note] : ["Marked as resolved"],
+        });
+        // Optionally add "resolved" tag to question
+        const updatedQuestion = storage.updateNode(question_id, {
+            mergeTags: ["resolved"],
+        });
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({
+                        success: true,
+                        message: "Question marked as resolved",
+                        question: {
+                            id: question_id,
+                            content: question.content.slice(0, 100) + (question.content.length > 100 ? "..." : ""),
+                        },
+                        resolvedBy: {
+                            id: resolved_by_id,
+                            type: resolution.type,
+                            content: resolution.content.slice(0, 100) + (resolution.content.length > 100 ? "..." : ""),
+                        },
+                        edge: {
+                            id: edge.id,
+                            relation: edge.relation,
+                        },
+                    }, null, 2),
                 },
             ],
         };

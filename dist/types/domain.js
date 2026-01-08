@@ -5,4 +5,5 @@ export const KnowledgeRelation = [
     "derived_from",
     "blocks",
     "duplicates",
+    "resolved_by",
 ];

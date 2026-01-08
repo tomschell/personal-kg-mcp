@@ -10,7 +10,7 @@ export const KnowledgeNodeSchema = z.object({
     type: z.enum(KnowledgeNodeType),
     content: z.string(),
     tags: z.array(z.string()),
-    visibility: z.enum(["private", "team", "public"]),
+    visibility: z.enum(["private", "team", "public"]).default("private"),
     createdAt: z.string(),
     updatedAt: z.string(),
     git: GitContextSchema.optional(),
@@ -26,6 +26,7 @@ export const KnowledgeEdgeSchema = z.object({
         "derived_from",
         "blocks",
         "duplicates",
+        "resolved_by",
     ]),
     createdAt: z.string(),
 });
