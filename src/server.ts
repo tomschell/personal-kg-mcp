@@ -51,6 +51,76 @@ export function createPersonalKgServer(): McpServer {
     return s.trim().replace(/\s+/g, "-").toLowerCase();
   }
 
+  // Levenshtein distance for fuzzy matching
+  function levenshteinDistance(a: string, b: string): number {
+    if (a.length === 0) return b.length;
+    if (b.length === 0) return a.length;
+    const matrix: number[][] = [];
+    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        const cost = a[j - 1] === b[i - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+    return matrix[b.length][a.length];
+  }
+
+  // Cache of existing prefixed tags (refreshed periodically)
+  let prefixedTagsCache: Set<string> = new Set();
+  let lastTagCacheRefresh = 0;
+  const TAG_CACHE_TTL = 60000; // 1 minute
+
+  function refreshTagCache(): void {
+    const now = Date.now();
+    if (now - lastTagCacheRefresh < TAG_CACHE_TTL) return;
+
+    prefixedTagsCache.clear();
+    for (const node of storage.listAllNodes()) {
+      for (const tag of node.tags) {
+        if (tag.startsWith("proj:") || tag.startsWith("ws:") || tag.startsWith("ticket:")) {
+          prefixedTagsCache.add(tag);
+        }
+      }
+    }
+    lastTagCacheRefresh = now;
+  }
+
+  // Find similar existing tag with given prefix
+  function findSimilarTag(normalized: string, prefix: string, maxDistance = 3): string | null {
+    refreshTagCache();
+
+    const existingTags = Array.from(prefixedTagsCache).filter(t => t.startsWith(prefix));
+    const fullTag = `${prefix}${normalized}`;
+
+    // Exact match - return as-is
+    if (existingTags.includes(fullTag)) return fullTag;
+
+    // Find closest match within threshold
+    let bestMatch: string | null = null;
+    let bestDistance = maxDistance + 1;
+
+    for (const existing of existingTags) {
+      const existingName = existing.slice(prefix.length);
+      const distance = levenshteinDistance(normalized, existingName);
+      if (distance <= maxDistance && distance < bestDistance) {
+        bestDistance = distance;
+        bestMatch = existing;
+      }
+    }
+
+    if (bestMatch) {
+      console.error(`[PKG] Fuzzy match: "${fullTag}" → "${bestMatch}" (distance: ${bestDistance})`);
+    }
+
+    return bestMatch;
+  }
+
   function normalizeTags(
     base: string[] | undefined,
     project?: string,
@@ -61,9 +131,21 @@ export function createPersonalKgServer(): McpServer {
     for (const t of base ?? []) {
       if (typeof t === "string" && t.trim().length > 0) set.add(normalizeTagString(t));
     }
-    if (project && project.trim()) set.add(`proj:${normalizeTagString(project)}`);
-    if (workstream && workstream.trim()) set.add(`ws:${normalizeTagString(workstream)}`);
-    if (ticket && ticket.trim()) set.add(`ticket:${normalizeTagString(ticket)}`);
+    if (project && project.trim()) {
+      const normalized = normalizeTagString(project);
+      const existing = findSimilarTag(normalized, "proj:");
+      set.add(existing ?? `proj:${normalized}`);
+    }
+    if (workstream && workstream.trim()) {
+      const normalized = normalizeTagString(workstream);
+      const existing = findSimilarTag(normalized, "ws:");
+      set.add(existing ?? `ws:${normalized}`);
+    }
+    if (ticket && ticket.trim()) {
+      const normalized = normalizeTagString(ticket);
+      const existing = findSimilarTag(normalized, "ticket:");
+      set.add(existing ?? `ticket:${normalized}`);
+    }
     return Array.from(set);
   }
 
