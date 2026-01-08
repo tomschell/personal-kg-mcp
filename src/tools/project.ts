@@ -560,3 +560,220 @@ async function handleFindSimilar(storage: FileStorage, id: string, limit: number
     ],
   };
 }
+
+// =============================================================================
+// QUESTION TRACKING TOOLS
+// =============================================================================
+
+function daysSince(isoDate: string): number {
+  const then = new Date(isoDate).getTime();
+  const now = Date.now();
+  return Math.floor((now - then) / (1000 * 60 * 60 * 24));
+}
+
+export function setupQuestionTools(
+  server: McpServer,
+  storage: FileStorage
+): void {
+  // Open Questions Tracker
+  server.tool(
+    "kg_open_questions",
+    "Lists unresolved questions with aging information. Questions are considered 'stale' after 3 days. Use to track what needs follow-up and identify forgotten questions.",
+    {
+      project: z.string().optional()
+        .describe("Filter by project name (will be normalized to 'proj:project-name' format)"),
+      include_stale: z.boolean().default(true)
+        .describe("Include questions older than 3 days (marked as stale)"),
+      limit: z.number().int().min(1).max(50).default(10)
+        .describe("Maximum number of questions to return"),
+    },
+    async ({ project, include_stale, limit }) => {
+      logToolCall("kg_open_questions", { project, include_stale, limit });
+
+      // Build search params
+      const tags: string[] = [];
+      if (project) {
+        tags.push(`proj:${project.toLowerCase().replace(/\s+/g, "-")}`);
+      }
+
+      // Get all questions
+      const questions = storage.searchNodes({
+        type: "question",
+        tags: tags.length > 0 ? tags : undefined,
+        limit: 200, // Get more to filter
+      });
+
+      // Check which have resolution edges
+      const unresolved = questions.filter(q => {
+        const edges = storage.listEdges(q.id);
+        return !edges.some(e => e.relation === "resolved_by");
+      });
+
+      // Calculate staleness and add metadata
+      const withAge = unresolved.map(q => {
+        const ageInDays = daysSince(q.createdAt);
+        return {
+          id: q.id,
+          content: q.content,
+          tags: q.tags,
+          importance: q.importance || "medium",
+          createdAt: q.createdAt,
+          ageInDays,
+          isStale: ageInDays > 3,
+          ageLabel: ageInDays === 0 ? "today" :
+                    ageInDays === 1 ? "yesterday" :
+                    `${ageInDays} days ago`,
+        };
+      });
+
+      // Filter by staleness if needed
+      const filtered = include_stale
+        ? withAge
+        : withAge.filter(q => !q.isStale);
+
+      // Sort by age (oldest first for attention)
+      const sorted = filtered.sort((a, b) => b.ageInDays - a.ageInDays);
+      const results = sorted.slice(0, limit);
+
+      // Summary stats
+      const staleCount = withAge.filter(q => q.isStale).length;
+      const freshCount = withAge.filter(q => !q.isStale).length;
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              total: results.length,
+              summary: {
+                staleQuestions: staleCount,
+                freshQuestions: freshCount,
+                oldestDays: results[0]?.ageInDays || 0,
+              },
+              questions: results,
+              tip: staleCount > 0
+                ? `${staleCount} question(s) are stale (>3 days). Consider resolving or updating them.`
+                : "All questions are fresh!",
+            }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  // Resolve Question Tool
+  server.tool(
+    "kg_resolve_question",
+    "Marks a question as resolved by linking it to a decision, insight, or other node that answers it. Creates a 'resolved_by' relationship.",
+    {
+      question_id: z.string()
+        .describe("ID of the question node to resolve"),
+      resolved_by_id: z.string()
+        .describe("ID of the node that resolves this question (typically a decision or insight)"),
+      resolution_note: z.string().optional()
+        .describe("Optional note explaining how this resolves the question"),
+    },
+    async ({ question_id, resolved_by_id, resolution_note }) => {
+      logToolCall("kg_resolve_question", { question_id, resolved_by_id, resolution_note });
+
+      // Validate question exists and is a question
+      const question = storage.getNode(question_id);
+      if (!question) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: "Question not found", success: false }, null, 2),
+            },
+          ],
+        };
+      }
+
+      if (question.type !== "question") {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error: `Node is not a question (type: ${question.type})`,
+                success: false,
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Validate resolution node exists
+      const resolution = storage.getNode(resolved_by_id);
+      if (!resolution) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ error: "Resolution node not found", success: false }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Check if already resolved
+      const existingEdges = storage.listEdges(question_id);
+      const alreadyResolved = existingEdges.find(e => e.relation === "resolved_by");
+      if (alreadyResolved) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                warning: "Question was already resolved",
+                existingResolution: alreadyResolved.toNodeId,
+                success: false,
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      // Create resolution edge
+      const edge = storage.createEdge(
+        question_id,
+        resolved_by_id,
+        "resolved_by",
+        {
+          strength: 1.0,
+          evidence: resolution_note ? [resolution_note] : ["Marked as resolved"],
+        }
+      );
+
+      // Optionally add "resolved" tag to question
+      const updatedQuestion = storage.updateNode(question_id, {
+        mergeTags: ["resolved"],
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              message: "Question marked as resolved",
+              question: {
+                id: question_id,
+                content: question.content.slice(0, 100) + (question.content.length > 100 ? "..." : ""),
+              },
+              resolvedBy: {
+                id: resolved_by_id,
+                type: resolution.type,
+                content: resolution.content.slice(0, 100) + (resolution.content.length > 100 ? "..." : ""),
+              },
+              edge: {
+                id: edge.id,
+                relation: edge.relation,
+              },
+            }, null, 2),
+          },
+        ],
+      };
+    },
+  );
+}

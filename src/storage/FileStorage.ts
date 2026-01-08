@@ -87,6 +87,7 @@ export class FileStorage {
       appendContent?: string;
       tags?: string[];
       mergeTags?: string[];
+      removeTags?: string[];
       visibility?: KnowledgeNode["visibility"];
       importance?: KnowledgeNode["importance"];
       git?: KnowledgeNode["git"];
@@ -104,6 +105,9 @@ export class FileStorage {
       const set = new Set<string>(node.tags);
       for (const t of changes.mergeTags) set.add(t);
       node.tags = Array.from(set);
+    }
+    if (Array.isArray(changes.removeTags) && changes.removeTags.length > 0) {
+      node.tags = node.tags.filter((t) => !changes.removeTags!.includes(t));
     }
     if (changes.visibility) node.visibility = changes.visibility;
     if (changes.importance) node.importance = changes.importance;
@@ -334,20 +338,43 @@ export class FileStorage {
   repair(): {
     removedNodes: number;
     removedEdges: number;
+    migratedNodes: number;
     quarantinedDir: string;
   } {
     const quarantine = join(this.baseDir, "quarantine", Date.now().toString());
     mkdirSync(quarantine, { recursive: true });
     let removedNodes = 0;
     let removedEdges = 0;
+    let migratedNodes = 0;
 
-    // Nodes
+    // Nodes - try to auto-fix before quarantining
     for (const f of readdirSync(this.nodesDir)) {
       if (!f.endsWith(".json")) continue;
       const p = join(this.nodesDir, f);
       try {
-        KnowledgeNodeSchema.parse(JSON.parse(readFileSync(p, "utf8")));
+        const raw = JSON.parse(readFileSync(p, "utf8"));
+
+        // Try to fix common missing fields
+        let modified = false;
+        if (!raw.visibility) {
+          raw.visibility = "private";
+          modified = true;
+        }
+        if (!raw.tags) {
+          raw.tags = [];
+          modified = true;
+        }
+
+        // Validate after fixes
+        KnowledgeNodeSchema.parse(raw);
+
+        // If we modified, save the fixed version
+        if (modified) {
+          writeFileSync(p, JSON.stringify(raw, null, 2), "utf8");
+          migratedNodes++;
+        }
       } catch {
+        // Still invalid after fixes - quarantine
         cpSync(p, join(quarantine, f));
         rmSync(p);
         removedNodes++;
@@ -367,6 +394,6 @@ export class FileStorage {
       }
     }
 
-    return { removedNodes, removedEdges, quarantinedDir: quarantine };
+    return { removedNodes, removedEdges, migratedNodes, quarantinedDir: quarantine };
   }
 }

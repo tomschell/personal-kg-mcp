@@ -97,6 +97,8 @@ npm install @tomschell/personal-kg-mcp
 
 3. **Restart your MCP client** (Cursor, Claude Desktop, etc.)
 
+> ⚠️ **Important**: MCP servers are only loaded at session startup. After adding or modifying the MCP configuration, you **must restart** your Claude Code, Cursor, or Claude Desktop session for the tools to become available. Simply saving the config file is not enough.
+
 ### Configuration Options
 
 | Environment Variable | Default | Description |
@@ -235,13 +237,30 @@ The Personal KG MCP server is configured through environment variables set in `.
 ## Usage Guide
 
 ### Tag Conventions
-- Normalised tags: `proj:<name>`, `ws:<workstream>`, `ticket:<id>`  
+- Normalised tags: `proj:<name>`, `ws:<workstream>`, `ticket:<id>`
 - Examples: `proj:kg`  `ws:kg-dev`  `ticket:78`
 
+### Agent Training Reminders
+
+**Important for Developers**: The `kg_session_warmup` tool includes an `agentTrainingReminders` field. These reminders are **NOT user-facing documentation** - they are designed to train AI agents on proper development workflows during coding sessions.
+
+**Purpose:**
+- Train agents on commit frequency and git best practices
+- Guide agents to follow project workflow conventions
+- Improve agent behavior through consistent guidance
+- Ensure code quality and proper git usage
+
+**Who sees this:**
+- AI agents during session warmup (embedded in context)
+- Developers reading the code
+- **NOT** end users browsing documentation
+
+Users benefit from these reminders indirectly through improved agent behavior, not by reading them directly.
+
 ### Proactive Behavior
-1. Capture key moments with **kg_capture** (decisions, progress, insights, questions).  
-2. At session boundaries use **kg_capture_session** (include `next_actions[]`).  
-3. When resuming a topic call **kg_query_context** or **kg_get_project_state**.  
+1. Capture key moments with **kg_capture** (decisions, progress, insights, questions).
+2. At session boundaries use **kg_capture_session** (include `next_actions[]`).
+3. When resuming a topic call **kg_query_context** or **kg_get_project_state**.
 4. Link entries to the active session and mark dependencies with **kg_create_edge**.
 
 ### Core Tools

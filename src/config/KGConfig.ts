@@ -14,6 +14,10 @@ export interface KGConfig {
       autoCapture?: boolean;
     };
   };
+  metrics?: {
+    enabled?: boolean;
+    retentionDays?: number;
+  };
 }
 
 export interface MCPCaptureConfig {
@@ -46,6 +50,10 @@ export function loadKGConfig(): KGConfig {
         exclude: process.env.PKG_MCP_CAPTURE_EXCLUDE?.split(',').map(t => t.trim()) || [],
         autoCapture: process.env.PKG_MCP_CAPTURE_AUTO !== 'false'
       }
+    },
+    metrics: {
+      enabled: process.env.PKG_METRICS_ENABLED !== 'false',
+      retentionDays: process.env.PKG_METRICS_RETENTION_DAYS ? parseInt(process.env.PKG_METRICS_RETENTION_DAYS, 10) : 30
     }
   };
 
@@ -65,6 +73,10 @@ export function loadKGConfig(): KGConfig {
         exclude: config.mcp?.capture?.exclude ?? [],
         autoCapture: config.mcp?.capture?.autoCapture ?? true
       }
+    },
+    metrics: {
+      enabled: config.metrics?.enabled ?? true,
+      retentionDays: config.metrics?.retentionDays ?? 30
     }
   };
 }

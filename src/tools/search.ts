@@ -419,3 +419,180 @@ async function handleTimeRangeSearch(
     structuredContent: payload,
   };
 }
+
+// =============================================================================
+// CONTEXT INJECTION TOOLS
+// =============================================================================
+
+export function setupContextTools(
+  server: McpServer,
+  storage: FileStorage,
+  EMBED_DIM: number
+): void {
+  server.tool(
+    "kg_get_relevant_context",
+    "Retrieves relevant past context for a given query. Returns brief summaries of related decisions, insights, and open questions. Perfect for proactive context injection before starting work on a topic.",
+    {
+      query: z.string()
+        .describe("The topic or task to find relevant context for"),
+      project: z.string().optional()
+        .describe("Optional project name to scope the search (normalized to 'proj:project-name')"),
+      max_items: z.number().int().min(1).max(10).default(5)
+        .describe("Maximum number of context items to return"),
+      include_questions: z.boolean().default(true)
+        .describe("Whether to include open questions in the context"),
+    },
+    async ({ query, project, max_items, include_questions }) => {
+      logToolCall("kg_get_relevant_context", { query, project, max_items, include_questions });
+
+      const projectTag = project
+        ? `proj:${project.toLowerCase().replace(/\s+/g, "-")}`
+        : undefined;
+
+      // Get all relevant nodes
+      const allNodes = storage.listAllNodes();
+      const queryEmbed = embedText(query, EMBED_DIM);
+
+      // Filter by project if specified
+      const filtered = projectTag
+        ? allNodes.filter((n) => n.tags.includes(projectTag))
+        : allNodes;
+
+      // Score nodes by relevance
+      const scored = filtered.map((n) => {
+        const similarity = cosineSimilarity(queryEmbed, embedText(n.content, EMBED_DIM));
+
+        // Boost decisions and insights
+        const typeBoost = n.type === "decision" ? 1.3 :
+                          n.type === "insight" ? 1.2 :
+                          n.type === "question" ? 1.1 : 1.0;
+
+        // Boost high importance
+        const importanceBoost = n.importance === "high" ? 1.2 :
+                                n.importance === "medium" ? 1.0 : 0.8;
+
+        // Recency factor (1.0 for today, 0.5 for 30 days ago)
+        const ageDays = (Date.now() - new Date(n.updatedAt || n.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+        const recencyFactor = Math.max(0.3, 1 - ageDays / 60);
+
+        return {
+          node: n,
+          score: similarity * typeBoost * importanceBoost * recencyFactor,
+          similarity,
+        };
+      });
+
+      // Sort by score
+      scored.sort((a, b) => b.score - a.score);
+
+      // Get decisions/insights
+      const relevantDecisions = scored
+        .filter((s) => s.node.type === "decision" && s.similarity > 0.2)
+        .slice(0, Math.ceil(max_items * 0.6));
+
+      const relevantInsights = scored
+        .filter((s) => s.node.type === "insight" && s.similarity > 0.2)
+        .slice(0, Math.ceil(max_items * 0.3));
+
+      // Get open questions if requested
+      let openQuestions: typeof scored = [];
+      if (include_questions) {
+        const questionNodes = scored.filter((s) =>
+          s.node.type === "question" && s.similarity > 0.15
+        );
+
+        // Filter to only unresolved questions
+        openQuestions = questionNodes.filter((s) => {
+          const edges = storage.listEdges(s.node.id);
+          return !edges.some((e) => e.relation === "resolved_by");
+        }).slice(0, 2);
+      }
+
+      // Build context items
+      const contextItems: Array<{
+        type: string;
+        summary: string;
+        id: string;
+        relevance: number;
+      }> = [];
+
+      for (const item of relevantDecisions) {
+        contextItems.push({
+          type: "decision",
+          summary: item.node.content.length > 200
+            ? item.node.content.slice(0, 200) + "..."
+            : item.node.content,
+          id: item.node.id,
+          relevance: Math.round(item.similarity * 100),
+        });
+      }
+
+      for (const item of relevantInsights) {
+        contextItems.push({
+          type: "insight",
+          summary: item.node.content.length > 200
+            ? item.node.content.slice(0, 200) + "..."
+            : item.node.content,
+          id: item.node.id,
+          relevance: Math.round(item.similarity * 100),
+        });
+      }
+
+      for (const item of openQuestions) {
+        contextItems.push({
+          type: "open_question",
+          summary: item.node.content.length > 200
+            ? item.node.content.slice(0, 200) + "..."
+            : item.node.content,
+          id: item.node.id,
+          relevance: Math.round(item.similarity * 100),
+        });
+      }
+
+      // Sort by relevance and limit
+      contextItems.sort((a, b) => b.relevance - a.relevance);
+      const finalItems = contextItems.slice(0, max_items);
+
+      // Generate brief context message
+      let briefContext = "";
+      if (finalItems.length > 0) {
+        const decisionCount = finalItems.filter((i) => i.type === "decision").length;
+        const insightCount = finalItems.filter((i) => i.type === "insight").length;
+        const questionCount = finalItems.filter((i) => i.type === "open_question").length;
+
+        const parts: string[] = [];
+        if (decisionCount > 0) {
+          const topDecision = finalItems.find((i) => i.type === "decision");
+          parts.push(`Previously decided: ${topDecision?.summary.slice(0, 100)}...`);
+        }
+        if (questionCount > 0) {
+          const topQuestion = finalItems.find((i) => i.type === "open_question");
+          parts.push(`Open question: ${topQuestion?.summary.slice(0, 80)}...`);
+        }
+        if (insightCount > 0 && parts.length < 2) {
+          const topInsight = finalItems.find((i) => i.type === "insight");
+          parts.push(`Prior insight: ${topInsight?.summary.slice(0, 80)}...`);
+        }
+
+        briefContext = parts.join(" ");
+      }
+
+      const response = {
+        found: finalItems.length,
+        briefContext: briefContext || "No relevant prior context found.",
+        items: finalItems,
+        query,
+        project: projectTag,
+      };
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(response, null, 2),
+          },
+        ],
+      };
+    },
+  );
+}
