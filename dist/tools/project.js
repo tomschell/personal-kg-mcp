@@ -220,6 +220,19 @@ export function setupProjectTools(server, storage) {
         const effectiveLimit = limit || 20; // Use default of 20 if not specified
         const candidateLimit = Math.max(effectiveLimit * 3, 60);
         const allCandidates = storage.searchNodes({ tags, limit: candidateLimit });
+        // Get the absolute latest changes (by timestamp, regardless of importance)
+        // This ensures recent work is always visible at the top
+        const latestByTime = [...allCandidates]
+            .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+            .slice(0, 3)
+            .map(n => ({
+            id: n.id,
+            type: n.type,
+            content: n.content.length > 200 ? n.content.substring(0, 200) + '...' : n.content,
+            importance: n.importance,
+            updatedAt: n.updatedAt,
+            tags: n.tags.filter(t => !t.startsWith('proj:')), // Remove project tag for cleaner display
+        }));
         // Apply smart context selection to prevent drowning from high-volume captures
         const smartContext = selectSmartContext(allCandidates, effectiveLimit);
         // Still explicitly fetch questions and blockers (already prioritized by smart selection)
@@ -249,6 +262,8 @@ export function setupProjectTools(server, storage) {
         const warmup = {
             project,
             workstream,
+            // NEW: Latest changes by timestamp (always shows most recent work first)
+            latestChanges: latestByTime,
             recentWork: smartContext.priorityNodes,
             openQuestions: questions,
             blockers,
