@@ -23,6 +23,7 @@ export interface KnowledgeNode {
   updatedAt: string; // ISO timestamp
   git?: GitContext;
   importance?: (typeof ImportanceLevel)[number];
+  embedding?: number[]; // OpenAI semantic embedding vector
 }
 
 export interface KnowledgeEdge {

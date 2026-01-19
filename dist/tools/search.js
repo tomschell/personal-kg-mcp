@@ -4,6 +4,7 @@ import { z } from "zod";
 import { KnowledgeNodeType } from "../types/enums.js";
 import { formatNodes } from "../utils/format.js";
 import { embedText, cosineSimilarity, tokenize } from "../utils/embeddings.js";
+import { generateEmbedding, isOpenAIAvailable } from "../utils/openai-embeddings.js";
 import { reconstructContext } from "../utils/context.js";
 import { expandTagsFull } from "../utils/tagEnhancements.js";
 import { expandQuery } from "../utils/queryExpansion.js";
@@ -235,14 +236,37 @@ async function handleSemanticSearch(storage, ann, USE_ANN, EMBED_DIM, args) {
             content: [{ type: "text", text: JSON.stringify({ error: "Query required for semantic search", results: [] }, null, 2) }],
         };
     }
-    const q = embedText(query, EMBED_DIM);
     // Extract query tokens for hybrid search
     const queryTokens = hybrid ? new Set(tokenize(query)) : null;
     let results = [];
-    if (USE_ANN && !hybrid) {
-        // ANN path - only for pure semantic search
-        const top = ann.search(q, limit * 3);
-        const nodesById = new Map(storage.listAllNodes().map((n) => [n.id, n]));
+    const nodes = storage.listAllNodes();
+    // Check if we can use OpenAI embeddings
+    const useOpenAI = isOpenAIAvailable();
+    const nodesWithOpenAI = useOpenAI ? nodes.filter(n => n.embedding && n.embedding.length > 0) : [];
+    const hasOpenAINodes = nodesWithOpenAI.length > 0;
+    // Generate query embedding (OpenAI if available, otherwise local)
+    let queryEmbedding;
+    if (useOpenAI && hasOpenAINodes) {
+        // Use OpenAI for query embedding to match stored embeddings
+        const openaiQueryEmbed = await generateEmbedding(query);
+        if (openaiQueryEmbed) {
+            queryEmbedding = openaiQueryEmbed;
+        }
+        else {
+            // Fallback to local if OpenAI fails
+            queryEmbedding = embedText(query, EMBED_DIM);
+        }
+    }
+    else {
+        // Use local bag-of-words embedding
+        queryEmbedding = embedText(query, EMBED_DIM);
+    }
+    // Determine if query embedding is OpenAI-based (for compatibility check)
+    const queryIsOpenAI = Array.isArray(queryEmbedding) && queryEmbedding.length > 256;
+    if (USE_ANN && !hybrid && !queryIsOpenAI) {
+        // ANN path - only for pure semantic search with local embeddings
+        const top = ann.search(queryEmbedding, limit * 3);
+        const nodesById = new Map(nodes.map((n) => [n.id, n]));
         results = top
             .map(({ id, score }) => ({ id, score, node: nodesById.get(id) }))
             .filter((r) => r.node && r.score >= threshold)
@@ -250,9 +274,22 @@ async function handleSemanticSearch(storage, ann, USE_ANN, EMBED_DIM, args) {
             .map((r) => ({ id: r.id, score: r.score, snippet: r.node.content.slice(0, 160) }));
     }
     else {
-        const nodes = storage.listAllNodes();
+        // Full scan with embedding comparison
         const scored = nodes.map((n) => {
-            const semScore = cosineSimilarity(q, embedText(n.content, EMBED_DIM));
+            let semScore;
+            if (queryIsOpenAI && n.embedding && n.embedding.length > 0) {
+                // Both query and node have OpenAI embeddings - use them
+                semScore = cosineSimilarity(queryEmbedding, n.embedding);
+            }
+            else if (!queryIsOpenAI) {
+                // Local query embedding - compare with local embedding of content
+                semScore = cosineSimilarity(queryEmbedding, embedText(n.content, EMBED_DIM));
+            }
+            else {
+                // Query is OpenAI but node doesn't have embedding - lower score
+                // This encourages migration while still returning results
+                semScore = cosineSimilarity(embedText(query, EMBED_DIM), embedText(n.content, EMBED_DIM)) * 0.8;
+            }
             if (!hybrid || !queryTokens) {
                 // Pure semantic search
                 return { node: n, score: semScore };
@@ -294,7 +331,13 @@ async function handleSemanticSearch(storage, ann, USE_ANN, EMBED_DIM, args) {
             snippet: r.node.content.slice(0, 160),
         }));
     }
-    const payload = { mode: "semantic", total: results.length, results };
+    const payload = {
+        mode: "semantic",
+        embeddingType: queryIsOpenAI ? "openai" : "local",
+        nodesWithEmbeddings: hasOpenAINodes ? nodesWithOpenAI.length : 0,
+        total: results.length,
+        results
+    };
     return {
         content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
         structuredContent: payload,
@@ -335,14 +378,36 @@ export function setupContextTools(server, storage, EMBED_DIM) {
             : undefined;
         // Get all relevant nodes
         const allNodes = storage.listAllNodes();
-        const queryEmbed = embedText(query, EMBED_DIM);
         // Filter by project if specified
         const filtered = projectTag
             ? allNodes.filter((n) => n.tags.includes(projectTag))
             : allNodes;
+        // Determine if we can use OpenAI embeddings
+        const useOpenAI = isOpenAIAvailable();
+        const nodesWithOpenAI = useOpenAI ? filtered.filter(n => n.embedding && n.embedding.length > 0) : [];
+        const hasOpenAINodes = nodesWithOpenAI.length > 0;
+        // Generate query embedding
+        let queryEmbed;
+        if (useOpenAI && hasOpenAINodes) {
+            const openaiEmbed = await generateEmbedding(query);
+            queryEmbed = openaiEmbed || embedText(query, EMBED_DIM);
+        }
+        else {
+            queryEmbed = embedText(query, EMBED_DIM);
+        }
+        const queryIsOpenAI = Array.isArray(queryEmbed) && queryEmbed.length > 256;
         // Score nodes by relevance
         const scored = filtered.map((n) => {
-            const similarity = cosineSimilarity(queryEmbed, embedText(n.content, EMBED_DIM));
+            let similarity;
+            if (queryIsOpenAI && n.embedding && n.embedding.length > 0) {
+                similarity = cosineSimilarity(queryEmbed, n.embedding);
+            }
+            else if (!queryIsOpenAI) {
+                similarity = cosineSimilarity(queryEmbed, embedText(n.content, EMBED_DIM));
+            }
+            else {
+                similarity = cosineSimilarity(embedText(query, EMBED_DIM), embedText(n.content, EMBED_DIM)) * 0.8;
+            }
             // Boost decisions and insights
             const typeBoost = n.type === "decision" ? 1.3 :
                 n.type === "insight" ? 1.2 :

@@ -10,6 +10,7 @@ globalThis.require = require;
 import { FileStorage } from "./storage/FileStorage.js";
 import { AnnIndex } from "./utils/ann.js";
 import { embedText } from "./utils/embeddings.js";
+import { initOpenAI, getEmbeddingModel } from "./utils/openai-embeddings.js";
 import { buildTagCooccurrence } from "./utils/tagstats.js";
 import { setupAllTools } from "./tools/index.js";
 import { getStoragePath, validateConfig } from "./config/KGConfig.js";
@@ -20,6 +21,14 @@ export function createPersonalKgServer() {
     const configIssues = validateConfig();
     if (configIssues.length > 0) {
         console.error('[PKG] Configuration issues found:', configIssues);
+    }
+    // Initialize OpenAI for semantic embeddings (optional)
+    const openaiInitialized = initOpenAI();
+    if (openaiInitialized) {
+        console.error(`[PKG] OpenAI embeddings enabled using ${getEmbeddingModel()}`);
+    }
+    else {
+        console.error('[PKG] OpenAI not configured - using local bag-of-words embeddings');
     }
     const storage = new FileStorage({
         baseDir: storagePath,

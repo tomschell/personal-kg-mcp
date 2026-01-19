@@ -91,6 +91,7 @@ export class FileStorage {
       visibility?: KnowledgeNode["visibility"];
       importance?: KnowledgeNode["importance"];
       git?: KnowledgeNode["git"];
+      embedding?: number[];
     },
   ): KnowledgeNode | undefined {
     const file = join(this.nodesDir, `${id}.json`);
@@ -112,10 +113,25 @@ export class FileStorage {
     if (changes.visibility) node.visibility = changes.visibility;
     if (changes.importance) node.importance = changes.importance;
     if (changes.git) node.git = changes.git;
+    if (Array.isArray(changes.embedding)) node.embedding = changes.embedding;
     node.updatedAt = new Date().toISOString();
     writeFileSync(file, JSON.stringify(node, null, 2), "utf8");
     this.nodeCache.set(id, node);
     return node;
+  }
+
+  /**
+   * Update only the embedding for a node (doesn't change updatedAt).
+   * Used during migration to avoid changing timestamps.
+   */
+  updateNodeEmbedding(id: string, embedding: number[]): boolean {
+    const file = join(this.nodesDir, `${id}.json`);
+    if (!existsSync(file)) return false;
+    const node = JSON.parse(readFileSync(file, "utf8")) as KnowledgeNode;
+    node.embedding = embedding;
+    writeFileSync(file, JSON.stringify(node, null, 2), "utf8");
+    this.nodeCache.set(id, node);
+    return true;
   }
 
   listRecent(limit = 20): KnowledgeNode[] {

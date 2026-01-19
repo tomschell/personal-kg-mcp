@@ -5,6 +5,7 @@ import { FileStorage } from "../storage/FileStorage.js";
 import type { CreateNodeInput } from "../types/domain.js";
 import { findAutoLinks } from "../utils/autoLink.js";
 import { embedText } from "../utils/embeddings.js";
+import { generateEmbedding, isOpenAIAvailable } from "../utils/openai-embeddings.js";
 import { AnnIndex } from "../utils/ann.js";
 import { scoreRelationship } from "../utils/relationships.js";
 
@@ -91,7 +92,24 @@ export function setupCoreTools(
         importance: args.importance,
       };
       const node = storage.createNode(input);
-      // Incremental ANN insert
+
+      // Generate and store OpenAI embedding if available
+      if (isOpenAIAvailable()) {
+        try {
+          // Include tags in the embedding text for better semantic matching
+          const textToEmbed = node.content + " " + node.tags.join(" ");
+          const embedding = await generateEmbedding(textToEmbed);
+          if (embedding) {
+            storage.updateNodeEmbedding(node.id, embedding);
+            // Update node reference with embedding for return value
+            node.embedding = embedding;
+          }
+        } catch (err) {
+          console.error("[PKG] Failed to generate embedding:", err);
+        }
+      }
+
+      // Incremental ANN insert (for local bag-of-words fallback)
       if (USE_ANN) {
         try {
           ann.add(node.id, embedText(node.content, EMBED_DIM));
@@ -268,10 +286,26 @@ export function setupCoreTools(
       }
 
       // Re-embed if content changed
-      if (USE_ANN && (args.content || args.appendContent)) {
-        try {
-          ann.add(updatedNode.id, embedText(updatedNode.content, EMBED_DIM));
-        } catch {}
+      if (args.content || args.appendContent) {
+        // Regenerate OpenAI embedding
+        if (isOpenAIAvailable()) {
+          try {
+            const textToEmbed = updatedNode.content + " " + updatedNode.tags.join(" ");
+            const embedding = await generateEmbedding(textToEmbed);
+            if (embedding) {
+              storage.updateNodeEmbedding(updatedNode.id, embedding);
+              updatedNode.embedding = embedding;
+            }
+          } catch (err) {
+            console.error("[PKG] Failed to regenerate embedding:", err);
+          }
+        }
+        // Update ANN index for local fallback
+        if (USE_ANN) {
+          try {
+            ann.add(updatedNode.id, embedText(updatedNode.content, EMBED_DIM));
+          } catch {}
+        }
       }
 
       return {

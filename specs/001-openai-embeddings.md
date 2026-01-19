@@ -1,6 +1,6 @@
 # Feature: OpenAI Semantic Embeddings
 
-**Status:** Draft
+**Status:** Implemented
 **Priority:** P1
 **Created:** 2026-01-19
 **Issue:** #6 (supersedes Ollama proposal)
@@ -255,14 +255,14 @@ async ({ query, limit }) => {
 
 ## Acceptance Criteria
 
-- [ ] OpenAI embeddings generated on `kg_capture` when API key available
-- [ ] Embeddings persisted in node JSON files
-- [ ] `kg_semantic_search` uses stored embeddings when available
-- [ ] `kg_find_similar` uses stored embeddings when available
-- [ ] Graceful fallback to bag-of-words when OpenAI unavailable
-- [ ] Migration tool to backfill existing nodes
-- [ ] All existing tests pass
-- [ ] New tests for embedding generation and search
+- [x] OpenAI embeddings generated on `kg_capture` when API key available
+- [x] Embeddings persisted in node JSON files
+- [x] `kg_semantic_search` uses stored embeddings when available
+- [x] `kg_find_similar` uses stored embeddings when available
+- [x] Graceful fallback to bag-of-words when OpenAI unavailable
+- [x] Migration tool to backfill existing nodes
+- [x] All existing tests pass
+- [x] New tests for embedding generation and search
 
 ## Test Plan
 
@@ -305,4 +305,30 @@ async ({ query, limit }) => {
 
 ## Implementation Log
 
-_(To be filled during implementation)_
+### 2026-01-19: Full Implementation Complete
+
+**Files Created:**
+- `src/utils/openai-embeddings.ts` - OpenAI embedding provider with batch support
+
+**Files Modified:**
+- `package.json` - Added `openai` dependency (^4.77.0)
+- `src/types/domain.ts` - Added `embedding?: number[]` field to KnowledgeNode
+- `src/types/schemas.ts` - Added embedding validation to KnowledgeNodeSchema
+- `src/utils/embeddings.ts` - Unified interface with OpenAI and local fallback
+- `src/storage/FileStorage.ts` - Added `updateNodeEmbedding()` method
+- `src/server.ts` - Initialize OpenAI client on startup
+- `src/tools/core.ts` - Generate embeddings on capture and update
+- `src/tools/search.ts` - Use stored embeddings for semantic search
+- `src/tools/analysis.ts` - Use stored embeddings for clustering
+- `src/tools/maintenance.ts` - Added `migrate_embeddings` operation
+
+**Tests Created:**
+- `src/__tests__/openai-embeddings.test.ts` - 16 tests for embedding functionality
+
+**Key Implementation Details:**
+1. OpenAI embeddings are generated automatically on `kg_capture` when API key is present
+2. Embeddings include both content and tags for better semantic matching
+3. Semantic search falls back to local bag-of-words when no embeddings available
+4. Search response includes `embeddingType` to indicate which method was used
+5. Migration tool processes nodes in batches with progress logging
+6. All 193 tests pass, including new embedding tests

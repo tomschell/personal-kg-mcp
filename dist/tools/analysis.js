@@ -2,6 +2,7 @@
 // Contains consolidated analysis and graph exploration tools
 import { z } from "zod";
 import { embedText, cosineSimilarity } from "../utils/embeddings.js";
+import { isOpenAIAvailable } from "../utils/openai-embeddings.js";
 // Helper functions
 function logToolCall(name, args) {
     try {
@@ -90,9 +91,25 @@ export function setupAnalysisTools(server, storage) {
 // =============================================================================
 // ANALYSIS OPERATION HANDLERS
 // =============================================================================
+/**
+ * Helper to compute similarity between two nodes.
+ * Uses OpenAI embeddings if available, otherwise falls back to local.
+ */
+function computeNodeSimilarity(a, b) {
+    // Check if both nodes have OpenAI embeddings
+    if (a.embedding && a.embedding.length > 0 && b.embedding && b.embedding.length > 0) {
+        return cosineSimilarity(a.embedding, b.embedding);
+    }
+    // Fallback to local bag-of-words
+    return cosineSimilarity(embedText(a.content), embedText(b.content));
+}
 async function handleClusters(storage, limit, threshold) {
     const nodes = storage.listAllNodes().slice(0, limit);
     const clusters = [];
+    // Track embedding type used
+    const useOpenAI = isOpenAIAvailable();
+    const nodesWithEmbeddings = nodes.filter(n => n.embedding && n.embedding.length > 0);
+    const embeddingType = useOpenAI && nodesWithEmbeddings.length > 0 ? "openai" : "local";
     // Simple clustering based on content similarity
     const processed = new Set();
     for (const node of nodes) {
@@ -103,7 +120,7 @@ async function handleClusters(storage, limit, threshold) {
         for (const otherNode of nodes) {
             if (processed.has(otherNode.id))
                 continue;
-            const similarity = cosineSimilarity(embedText(node.content), embedText(otherNode.content));
+            const similarity = computeNodeSimilarity(node, otherNode);
             if (similarity >= threshold) {
                 cluster.push(otherNode.id);
                 processed.add(otherNode.id);
@@ -121,7 +138,13 @@ async function handleClusters(storage, limit, threshold) {
         content: [
             {
                 type: "text",
-                text: JSON.stringify({ operation: "clusters", total: clusters.length, clusters }, null, 2),
+                text: JSON.stringify({
+                    operation: "clusters",
+                    embeddingType,
+                    nodesWithEmbeddings: nodesWithEmbeddings.length,
+                    total: clusters.length,
+                    clusters
+                }, null, 2),
             },
         ],
     };
