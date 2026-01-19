@@ -5,6 +5,8 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { FileStorage } from "../storage/FileStorage.js";
 import { embedText, cosineSimilarity } from "../utils/embeddings.js";
+import { isOpenAIAvailable } from "../utils/openai-embeddings.js";
+import type { KnowledgeNode } from "../types/domain.js";
 
 // Helper functions
 function logToolCall(name: string, args?: unknown): void {
@@ -119,9 +121,27 @@ export function setupAnalysisTools(
 // ANALYSIS OPERATION HANDLERS
 // =============================================================================
 
+/**
+ * Helper to compute similarity between two nodes.
+ * Uses OpenAI embeddings if available, otherwise falls back to local.
+ */
+function computeNodeSimilarity(a: KnowledgeNode, b: KnowledgeNode): number {
+  // Check if both nodes have OpenAI embeddings
+  if (a.embedding && a.embedding.length > 0 && b.embedding && b.embedding.length > 0) {
+    return cosineSimilarity(a.embedding, b.embedding);
+  }
+  // Fallback to local bag-of-words
+  return cosineSimilarity(embedText(a.content), embedText(b.content));
+}
+
 async function handleClusters(storage: FileStorage, limit: number, threshold: number) {
   const nodes = storage.listAllNodes().slice(0, limit);
   const clusters: Array<{ id: string; nodes: string[]; centroid: string }> = [];
+
+  // Track embedding type used
+  const useOpenAI = isOpenAIAvailable();
+  const nodesWithEmbeddings = nodes.filter(n => n.embedding && n.embedding.length > 0);
+  const embeddingType = useOpenAI && nodesWithEmbeddings.length > 0 ? "openai" : "local";
 
   // Simple clustering based on content similarity
   const processed = new Set<string>();
@@ -134,10 +154,7 @@ async function handleClusters(storage: FileStorage, limit: number, threshold: nu
     for (const otherNode of nodes) {
       if (processed.has(otherNode.id)) continue;
 
-      const similarity = cosineSimilarity(
-        embedText(node.content),
-        embedText(otherNode.content)
-      );
+      const similarity = computeNodeSimilarity(node, otherNode);
 
       if (similarity >= threshold) {
         cluster.push(otherNode.id);
@@ -158,7 +175,13 @@ async function handleClusters(storage: FileStorage, limit: number, threshold: nu
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify({ operation: "clusters", total: clusters.length, clusters }, null, 2),
+        text: JSON.stringify({
+          operation: "clusters",
+          embeddingType,
+          nodesWithEmbeddings: nodesWithEmbeddings.length,
+          total: clusters.length,
+          clusters
+        }, null, 2),
       },
     ],
   };

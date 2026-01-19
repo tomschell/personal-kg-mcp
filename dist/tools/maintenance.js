@@ -2,6 +2,7 @@
 // Contains consolidated admin and maintenance tools
 import { z } from "zod";
 import { getHealth } from "../handlers/health.js";
+import { generateEmbeddingBatch, isOpenAIAvailable } from "../utils/openai-embeddings.js";
 // Helper functions
 function logToolCall(name, args) {
     try {
@@ -45,7 +46,8 @@ const AdminOperation = [
     "export",
     "import",
     "rename_tag",
-    "merge_tags"
+    "merge_tags",
+    "migrate_embeddings"
 ];
 export function setupMaintenanceTools(server, storage) {
     // =============================================================================
@@ -53,7 +55,7 @@ export function setupMaintenanceTools(server, storage) {
     // Replaces: kg_health, kg_backup, kg_validate, kg_repair, kg_export, kg_import,
     //           kg_rename_tag, kg_merge_tags
     // =============================================================================
-    server.tool("kg_admin", "Unified admin tool for maintenance operations. Supports: 'health' for system status, 'backup' for data protection, 'validate' for integrity checks, 'repair' for fixing issues, 'export'/'import' for data migration, 'rename_tag'/'merge_tags' for tag management.", {
+    server.tool("kg_admin", "Unified admin tool for maintenance operations. Supports: 'health' for system status, 'backup' for data protection, 'validate' for integrity checks, 'repair' for fixing issues, 'export'/'import' for data migration, 'rename_tag'/'merge_tags' for tag management, 'migrate_embeddings' for backfilling OpenAI embeddings.", {
         operation: z.enum(AdminOperation)
             .describe("Admin operation: 'health', 'backup', 'validate', 'repair', 'export', 'import', 'rename_tag', 'merge_tags'."),
         // backup options
@@ -72,12 +74,17 @@ export function setupMaintenanceTools(server, storage) {
             .describe("[merge_tags] Tags to merge (will be removed)."),
         targetTag: z.string().optional()
             .describe("[merge_tags] Tag to merge into."),
+        // migrate_embeddings options
+        batchSize: z.number().int().min(1).max(100).default(20).optional()
+            .describe("[migrate_embeddings] Number of nodes to process per batch."),
+        force: z.boolean().default(false).optional()
+            .describe("[migrate_embeddings] Regenerate embeddings even for nodes that already have them."),
         // shared options
         dryRun: z.boolean().default(false).optional()
             .describe("[rename_tag, merge_tags] Preview changes without applying."),
     }, async (args) => {
-        const { operation, retentionDays = 30, payload, oldTag, newTag, sourceTags, targetTag, dryRun = false } = args;
-        logToolCall("kg_admin", { operation, retentionDays, oldTag, newTag, sourceTags, targetTag, dryRun });
+        const { operation, retentionDays = 30, payload, oldTag, newTag, sourceTags, targetTag, dryRun = false, batchSize = 20, force = false } = args;
+        logToolCall("kg_admin", { operation, retentionDays, oldTag, newTag, sourceTags, targetTag, dryRun, batchSize, force });
         switch (operation) {
             case "health":
                 return handleHealth();
@@ -95,6 +102,8 @@ export function setupMaintenanceTools(server, storage) {
                 return handleRenameTag(storage, oldTag, newTag, dryRun);
             case "merge_tags":
                 return handleMergeTags(storage, sourceTags, targetTag, dryRun);
+            case "migrate_embeddings":
+                return handleMigrateEmbeddings(storage, batchSize, force);
             default:
                 return {
                     content: [
@@ -308,6 +317,104 @@ async function handleMergeTags(storage, sourceTags, targetTag, dryRun = false) {
         targetTag,
         dryRun,
         affectedNodeIds: affected.map((n) => n.id),
+    };
+    return {
+        content: [
+            {
+                type: "text",
+                text: JSON.stringify(payload, null, 2),
+            },
+        ],
+        structuredContent: payload,
+    };
+}
+async function handleMigrateEmbeddings(storage, batchSize, force) {
+    // Check if OpenAI is available
+    if (!isOpenAIAvailable()) {
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({
+                        operation: "migrate_embeddings",
+                        success: false,
+                        error: "OpenAI API not configured. Set OPENAI_API_KEY environment variable.",
+                    }, null, 2),
+                },
+            ],
+        };
+    }
+    const nodes = storage.listAllNodes();
+    // Filter nodes that need embeddings
+    const nodesToMigrate = force
+        ? nodes
+        : nodes.filter(n => !n.embedding || n.embedding.length === 0);
+    if (nodesToMigrate.length === 0) {
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify({
+                        operation: "migrate_embeddings",
+                        success: true,
+                        totalNodes: nodes.length,
+                        nodesWithEmbeddings: nodes.filter(n => n.embedding && n.embedding.length > 0).length,
+                        migrated: 0,
+                        message: "All nodes already have embeddings. Use force=true to regenerate.",
+                    }, null, 2),
+                },
+            ],
+        };
+    }
+    let migrated = 0;
+    let failed = 0;
+    const errors = [];
+    // Process in batches
+    for (let i = 0; i < nodesToMigrate.length; i += batchSize) {
+        const batch = nodesToMigrate.slice(i, i + batchSize);
+        // Prepare texts for batch embedding (content + tags)
+        const texts = batch.map(n => n.content + " " + n.tags.join(" "));
+        try {
+            const embeddings = await generateEmbeddingBatch(texts);
+            // Store embeddings
+            for (let j = 0; j < batch.length; j++) {
+                const node = batch[j];
+                const embedding = embeddings[j];
+                if (embedding) {
+                    const success = storage.updateNodeEmbedding(node.id, embedding);
+                    if (success) {
+                        migrated++;
+                    }
+                    else {
+                        failed++;
+                        errors.push(`Failed to store embedding for node ${node.id}`);
+                    }
+                }
+                else {
+                    failed++;
+                    errors.push(`Failed to generate embedding for node ${node.id}`);
+                }
+            }
+        }
+        catch (error) {
+            // Batch failed - count all as failed
+            failed += batch.length;
+            errors.push(`Batch ${Math.floor(i / batchSize) + 1} failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+        }
+        // Log progress
+        console.error(`[PKG] migrate_embeddings: processed ${Math.min(i + batchSize, nodesToMigrate.length)}/${nodesToMigrate.length} nodes`);
+    }
+    const payload = {
+        operation: "migrate_embeddings",
+        success: failed === 0,
+        totalNodes: nodes.length,
+        nodesNeedingMigration: nodesToMigrate.length,
+        migrated,
+        failed,
+        errors: errors.length > 0 ? errors.slice(0, 10) : undefined, // Limit errors shown
+        message: failed === 0
+            ? `Successfully migrated ${migrated} node embeddings`
+            : `Migrated ${migrated} nodes with ${failed} failures`,
     };
     return {
         content: [

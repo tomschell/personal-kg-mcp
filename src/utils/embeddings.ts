@@ -1,4 +1,18 @@
 /**
+ * Unified Embedding Interface
+ *
+ * Provides both OpenAI-powered semantic embeddings and local bag-of-words fallback.
+ * OpenAI embeddings are used when OPENAI_API_KEY is available, otherwise falls back
+ * to local FNV hash-based bag-of-words embeddings.
+ */
+
+import {
+  generateEmbedding as openaiEmbed,
+  generateEmbeddingBatch as openaiEmbedBatch,
+  isOpenAIAvailable,
+} from "./openai-embeddings.js";
+
+/**
  * Tokenizes text with improved handling for technical terms
  * - Splits camelCase: "camelCase" -> "camel case"
  * - Splits PascalCase: "PascalCase" -> "pascal case"
@@ -26,8 +40,15 @@ export function tokenize(text: string): string[] {
     .filter(Boolean);
 }
 
-// Minimal local embedding: bag-of-words hashing to a fixed-size vector
-export function embedText(text: string, dim = 256): Float32Array {
+/**
+ * Local bag-of-words embedding using FNV hash.
+ * Used as fallback when OpenAI is unavailable.
+ *
+ * @param text - Text to embed
+ * @param dim - Vector dimension (default 256)
+ * @returns Normalized Float32Array vector
+ */
+export function embedTextLocal(text: string, dim = 256): Float32Array {
   const vec = new Float32Array(dim);
   const tokens = tokenize(text);
   for (const t of tokens) {
@@ -44,8 +65,100 @@ export function embedText(text: string, dim = 256): Float32Array {
   return vec;
 }
 
-export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  let s = 0;
-  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
-  return s;
+// Alias for backwards compatibility
+export const embedText = embedTextLocal;
+
+/**
+ * Synchronous embedding function for compatibility.
+ * Always uses local bag-of-words (cannot await OpenAI).
+ *
+ * @param text - Text to embed
+ * @param dim - Vector dimension (default 256)
+ * @returns Normalized Float32Array vector
+ */
+export function embedTextSync(text: string, dim = 256): Float32Array {
+  return embedTextLocal(text, dim);
 }
+
+/**
+ * Async embedding function that uses OpenAI when available.
+ * Falls back to local bag-of-words when OpenAI is unavailable.
+ *
+ * @param text - Text to embed
+ * @param localDim - Dimension for local fallback (default 256)
+ * @returns OpenAI embedding (number[]) or local embedding (Float32Array)
+ */
+export async function embedTextAsync(
+  text: string,
+  localDim = 256
+): Promise<number[] | Float32Array> {
+  if (isOpenAIAvailable()) {
+    const embedding = await openaiEmbed(text);
+    if (embedding) return embedding;
+  }
+  // Fallback to local bag-of-words
+  return embedTextLocal(text, localDim);
+}
+
+/**
+ * Batch async embedding function.
+ * Uses OpenAI batch API when available for efficiency.
+ *
+ * @param texts - Array of texts to embed
+ * @param localDim - Dimension for local fallback (default 256)
+ * @returns Array of embeddings
+ */
+export async function embedTextBatchAsync(
+  texts: string[],
+  localDim = 256
+): Promise<(number[] | Float32Array)[]> {
+  if (isOpenAIAvailable()) {
+    const embeddings = await openaiEmbedBatch(texts);
+    // Replace nulls with local fallback
+    return embeddings.map((emb, i) =>
+      emb !== null ? emb : embedTextLocal(texts[i], localDim)
+    );
+  }
+  // Fallback to local bag-of-words
+  return texts.map((t) => embedTextLocal(t, localDim));
+}
+
+/**
+ * Cosine similarity between two vectors.
+ * Works with both Float32Array (local) and number[] (OpenAI) vectors.
+ *
+ * @param a - First vector
+ * @param b - Second vector
+ * @returns Similarity score between -1 and 1
+ */
+export function cosineSimilarity(
+  a: number[] | Float32Array,
+  b: number[] | Float32Array
+): number {
+  if (a.length !== b.length) {
+    // Incompatible dimensions - can't compare
+    return 0;
+  }
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+
+  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+  if (denominator === 0) return 0;
+
+  return dot / denominator;
+}
+
+/**
+ * Check if semantic (OpenAI) embeddings are available.
+ *
+ * @returns true if OpenAI embeddings can be used
+ */
+export { isOpenAIAvailable };

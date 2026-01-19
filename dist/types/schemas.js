@@ -15,6 +15,7 @@ export const KnowledgeNodeSchema = z.object({
     updatedAt: z.string(),
     git: GitContextSchema.optional(),
     importance: z.enum(ImportanceLevel).optional(),
+    embedding: z.array(z.number()).optional(),
 });
 export const KnowledgeEdgeSchema = z.object({
     id: z.string().min(1),

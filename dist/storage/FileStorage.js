@@ -78,10 +78,26 @@ export class FileStorage {
             node.importance = changes.importance;
         if (changes.git)
             node.git = changes.git;
+        if (Array.isArray(changes.embedding))
+            node.embedding = changes.embedding;
         node.updatedAt = new Date().toISOString();
         writeFileSync(file, JSON.stringify(node, null, 2), "utf8");
         this.nodeCache.set(id, node);
         return node;
+    }
+    /**
+     * Update only the embedding for a node (doesn't change updatedAt).
+     * Used during migration to avoid changing timestamps.
+     */
+    updateNodeEmbedding(id, embedding) {
+        const file = join(this.nodesDir, `${id}.json`);
+        if (!existsSync(file))
+            return false;
+        const node = JSON.parse(readFileSync(file, "utf8"));
+        node.embedding = embedding;
+        writeFileSync(file, JSON.stringify(node, null, 2), "utf8");
+        this.nodeCache.set(id, node);
+        return true;
     }
     listRecent(limit = 20) {
         // naive scan ordered by updatedAt desc
