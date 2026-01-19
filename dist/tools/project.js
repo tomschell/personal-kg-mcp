@@ -5,6 +5,45 @@ import { getGitHubState, getCurrentBranch } from "../utils/github.js";
 import { isGitHubEnabled } from "../config/KGConfig.js";
 import { selectSmartContext } from "../utils/sessionContext.js";
 import { embedText, cosineSimilarity } from "../utils/embeddings.js";
+/**
+ * Strips the embedding array from a node for response output.
+ * Embeddings are 1536+ floats and would blow up token usage.
+ */
+function stripEmbedding(node) {
+    const { embedding, ...rest } = node;
+    return rest;
+}
+/**
+ * Strips embeddings from an array of nodes.
+ */
+function stripEmbeddings(nodes) {
+    return nodes.map(stripEmbedding);
+}
+/**
+ * Formats a node compactly for warmup/listing responses.
+ * Optimizations:
+ * - Truncates content to maxLength chars
+ * - Removes visibility (almost always "private")
+ * - Removes createdAt (redundant with updatedAt)
+ * - Removes embedding
+ * - Filters out proj: tags (caller already knows the project)
+ */
+function formatNodeCompact(node, maxLength = 200) {
+    return {
+        id: node.id,
+        type: node.type,
+        content: node.content.length > maxLength ? node.content.substring(0, maxLength) + '...' : node.content,
+        tags: node.tags.filter(t => !t.startsWith('proj:')),
+        importance: node.importance,
+        updatedAt: node.updatedAt,
+    };
+}
+/**
+ * Formats an array of nodes compactly.
+ */
+function formatNodesCompact(nodes, maxLength = 200) {
+    return nodes.map(n => formatNodeCompact(n, maxLength));
+}
 async function getAvailableProjects(storage) {
     const allNodes = storage.searchNodes({ limit: 1000 }); // Get all nodes for analysis
     // Extract all project tags
@@ -179,14 +218,15 @@ export function setupProjectTools(server, storage) {
         logToolCall("kg_get_project_state", { project });
         const projectTag = `proj:${project.toLowerCase().replace(/\s+/g, "-")}`;
         const nodes = storage.searchNodes({ tags: [projectTag], limit: 100 });
+        // Use compact format: truncated content, no visibility/createdAt, no proj: tags
         const state = {
             project,
             totalNodes: nodes.length,
-            recentDecisions: nodes.filter(n => n.type === "decision").slice(0, 5),
-            openQuestions: nodes.filter(n => n.type === "question").slice(0, 5),
-            blockers: nodes.filter(n => n.tags.includes("blocker")).slice(0, 5),
-            completedTasks: nodes.filter(n => n.tags.includes("completed")).slice(0, 5),
-            activeFocus: nodes.filter(n => n.tags.includes("active")).slice(0, 5)
+            recentDecisions: formatNodesCompact(nodes.filter(n => n.type === "decision").slice(0, 5)),
+            openQuestions: formatNodesCompact(nodes.filter(n => n.type === "question").slice(0, 5)),
+            blockers: formatNodesCompact(nodes.filter(n => n.tags.includes("blocker")).slice(0, 5)),
+            completedTasks: formatNodesCompact(nodes.filter(n => n.tags.includes("completed")).slice(0, 5)),
+            activeFocus: formatNodesCompact(nodes.filter(n => n.tags.includes("active")).slice(0, 5))
         };
         return {
             content: [
@@ -203,8 +243,9 @@ export function setupProjectTools(server, storage) {
         workstream: z.string().optional().describe("Optional workstream within the project for more focused context"),
         limit: z.number().int().min(1).max(100).default(20).describe("Number of recent nodes to include in the warmup context"),
         discover: z.boolean().default(false).describe("Enable discovery mode to explore available projects and recent activity. Automatically enabled if no project specified."),
-    }, async ({ project, workstream, limit, discover }) => {
-        logToolCall("kg_session_warmup", { project, workstream, limit, discover });
+        compact: z.boolean().default(false).describe("Return minimal response (skip agentTrainingReminders, groupedWork) to reduce token usage."),
+    }, async ({ project, workstream, limit, discover, compact }) => {
+        logToolCall("kg_session_warmup", { project, workstream, limit, discover, compact });
         // Enable discovery mode if no project specified or discover=true
         const shouldDiscover = !project || discover;
         if (shouldDiscover) {
@@ -262,12 +303,13 @@ export function setupProjectTools(server, storage) {
         const warmup = {
             project,
             workstream,
-            // NEW: Latest changes by timestamp (always shows most recent work first)
-            latestChanges: latestByTime,
-            recentWork: smartContext.priorityNodes,
-            openQuestions: questions,
-            blockers,
-            // NEW: Smart context insights
+            // Latest changes by timestamp (always shows most recent work first)
+            latestChanges: latestByTime, // Already manually constructed compactly
+            // Use compact format: truncated content, no visibility/createdAt, no proj: tags
+            recentWork: formatNodesCompact(smartContext.priorityNodes),
+            openQuestions: formatNodesCompact(questions),
+            blockers: formatNodesCompact(blockers),
+            // Context insights (always included, small overhead)
             contextInsights: {
                 totalCapturedNodes: smartContext.summary.totalNodes,
                 displayedNodes: smartContext.priorityNodes.length,
@@ -275,16 +317,18 @@ export function setupProjectTools(server, storage) {
                 highVolumePatterns: smartContext.summary.highVolumePatterns,
                 diversityApplied: smartContext.priorityNodes.length < allCandidates.length
             },
-            // NEW: Grouped work summaries (shows patterns without drowning in details)
-            groupedWork: clusteredWorkSummaries.length > 0 ? clusteredWorkSummaries : undefined,
             sessionStart: new Date().toISOString(),
-            // NEW: GitHub state integration
+            // GitHub state integration
             githubState,
-            // IMPORTANT: Agent Training Reminders (NOT user-facing documentation)
-            // These reminders train AI agents on proper development workflows during sessions.
-            // They guide agent behavior for commit patterns, code quality, and best practices.
-            // Users see these indirectly through improved agent behavior, not as direct guidance.
-            agentTrainingReminders: {
+        };
+        // Only include optional sections when not in compact mode
+        if (!compact) {
+            // Grouped work summaries (shows patterns without drowning in details)
+            if (clusteredWorkSummaries.length > 0) {
+                warmup.groupedWork = clusteredWorkSummaries;
+            }
+            // Agent Training Reminders (guides AI agent behavior for commit patterns, etc.)
+            warmup.agentTrainingReminders = {
                 commitFrequency: [
                     "🔄 Commit frequently - git hooks provide valuable feedback during development",
                     "💡 Target: Commit after each logical change, not just at completion",
@@ -293,8 +337,8 @@ export function setupProjectTools(server, storage) {
                     "📋 Include issue numbers in commit messages for tracking and automation"
                 ],
                 currentIssueGuidance: "Remember to reference issue numbers in commit messages for tracking"
-            }
-        };
+            };
+        }
         return {
             content: [
                 {
@@ -378,7 +422,8 @@ export function setupProjectTools(server, storage) {
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify({ accepted: true, node }, null, 2),
+                    // Strip embedding from response for consistency
+                    text: JSON.stringify({ accepted: true, node: stripEmbedding(node) }, null, 2),
                 },
             ],
         };
@@ -404,7 +449,8 @@ async function handleGetNode(storage, id) {
         content: [
             {
                 type: "text",
-                text: JSON.stringify({ operation: "get", node, relationships: edges }, null, 2),
+                // Strip embedding from response - it's 1536+ floats that blow up token usage
+                text: JSON.stringify({ operation: "get", node: stripEmbedding(node), relationships: edges }, null, 2),
             },
         ],
     };

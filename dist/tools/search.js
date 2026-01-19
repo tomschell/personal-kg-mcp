@@ -347,7 +347,9 @@ async function handleTimeRangeSearch(storage, args) {
     const { start, end, query, limit } = args;
     const nodes = storage.listByTimeRange({ start, end, query });
     const limitedNodes = nodes.slice(0, limit);
-    const payload = { mode: "time_range", total: limitedNodes.length, nodes: limitedNodes };
+    // Use formatNodes to strip embeddings and apply consistent formatting
+    const formattedNodes = formatNodes(limitedNodes, { format: "summary", summaryLength: 300 });
+    const payload = { mode: "time_range", total: limitedNodes.length, nodes: formattedNodes };
     return {
         content: [
             {

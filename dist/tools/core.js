@@ -4,6 +4,14 @@ import { findAutoLinks } from "../utils/autoLink.js";
 import { embedText } from "../utils/embeddings.js";
 import { generateEmbedding, isOpenAIAvailable } from "../utils/openai-embeddings.js";
 import { scoreRelationship } from "../utils/relationships.js";
+/**
+ * Strips the embedding array from a node for response output.
+ * Embeddings are 1536+ floats and would blow up token usage.
+ */
+function stripEmbedding(node) {
+    const { embedding, ...rest } = node;
+    return rest;
+}
 export const PERSONAL_KG_TOOLS = ["kg_capture", "kg_update_node"];
 export function setupCoreTools(server, storage, ann, USE_ANN, EMBED_DIM, normalizeTags, getWorkstreamTag, logToolCall) {
     // Primary capture tool
@@ -135,7 +143,8 @@ export function setupCoreTools(server, storage, ann, USE_ANN, EMBED_DIM, normali
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify({ accepted: true, node }, null, 2),
+                    // Strip embedding from response - it's 1536+ floats that would blow up token usage
+                    text: JSON.stringify({ accepted: true, node: stripEmbedding(node) }, null, 2),
                 },
             ],
         };
@@ -271,7 +280,8 @@ export function setupCoreTools(server, storage, ann, USE_ANN, EMBED_DIM, normali
             content: [
                 {
                     type: "text",
-                    text: JSON.stringify({ success: true, node: updatedNode }, null, 2),
+                    // Strip embedding from response - it's 1536+ floats that would blow up token usage
+                    text: JSON.stringify({ success: true, node: stripEmbedding(updatedNode) }, null, 2),
                 },
             ],
         };

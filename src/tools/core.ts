@@ -2,12 +2,21 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ImportanceLevel, KnowledgeNodeType } from "../types/enums.js";
 import { FileStorage } from "../storage/FileStorage.js";
-import type { CreateNodeInput } from "../types/domain.js";
+import type { CreateNodeInput, KnowledgeNode } from "../types/domain.js";
 import { findAutoLinks } from "../utils/autoLink.js";
 import { embedText } from "../utils/embeddings.js";
 import { generateEmbedding, isOpenAIAvailable } from "../utils/openai-embeddings.js";
 import { AnnIndex } from "../utils/ann.js";
 import { scoreRelationship } from "../utils/relationships.js";
+
+/**
+ * Strips the embedding array from a node for response output.
+ * Embeddings are 1536+ floats and would blow up token usage.
+ */
+function stripEmbedding(node: KnowledgeNode): Omit<KnowledgeNode, 'embedding'> {
+  const { embedding, ...rest } = node;
+  return rest;
+}
 
 export const PERSONAL_KG_TOOLS = ["kg_capture", "kg_update_node"] as const;
 
@@ -158,7 +167,8 @@ export function setupCoreTools(
         content: [
           {
             type: "text",
-            text: JSON.stringify({ accepted: true, node }, null, 2),
+            // Strip embedding from response - it's 1536+ floats that would blow up token usage
+            text: JSON.stringify({ accepted: true, node: stripEmbedding(node) }, null, 2),
           },
         ],
       };
@@ -312,7 +322,8 @@ export function setupCoreTools(
         content: [
           {
             type: "text",
-            text: JSON.stringify({ success: true, node: updatedNode }, null, 2),
+            // Strip embedding from response - it's 1536+ floats that would blow up token usage
+            text: JSON.stringify({ success: true, node: stripEmbedding(updatedNode) }, null, 2),
           },
         ],
       };
