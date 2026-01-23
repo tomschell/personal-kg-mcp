@@ -1,3 +1,11 @@
+# Environment files (may contain secrets)
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
 # Ignore Personal KG test storage artifacts
 # Timestamped test storage dirs created by tests
 test-storage-*/
