@@ -11,6 +11,7 @@ import { FileStorage } from "./storage/FileStorage.js";
 import { AnnIndex } from "./utils/ann.js";
 import { embedText } from "./utils/embeddings.js";
 import { initOpenAI, getEmbeddingModel } from "./utils/openai-embeddings.js";
+import { runStartupEmbeddingCheck } from "./utils/embedding-startup.js";
 import { buildTagCooccurrence } from "./utils/tagstats.js";
 import { setupAllTools } from "./tools/index.js";
 import { getStoragePath, validateConfig } from "./config/KGConfig.js";
@@ -33,6 +34,14 @@ export function createPersonalKgServer() {
     const storage = new FileStorage({
         baseDir: storagePath,
     });
+    // Run startup embedding check (warn/auto/silent based on PKG_EMBEDDING_STARTUP)
+    if (openaiInitialized) {
+        const startupMode = (process.env.PKG_EMBEDDING_STARTUP || "warn");
+        // Run async check - logs warnings or auto-migrates based on mode
+        runStartupEmbeddingCheck(storage, startupMode).catch(err => {
+            console.error("[PKG] Startup embedding check failed:", err);
+        });
+    }
     const USE_ANN = String(process.env.PKG_USE_ANN ?? "false").toLowerCase() === "true";
     const EMBED_DIM = 256;
     const ann = new AnnIndex(EMBED_DIM);
