@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-01-23
+
+### Added
+- `scripts/setup-conductor.sh` - Automated setup script for Conductor workspaces
+  - Creates .env symlinks to 1Password-managed environment files
+  - Verifies OPENAI_API_KEY accessibility
+  - Reports storage and MCP server installation status
+- `.env.example` - Documents required and optional environment variables
+  - OPENAI_API_KEY for semantic embeddings
+  - PKG_EMBEDDING_MODEL, PKG_EMBEDDING_DIM configuration options
+
+### Changed
+- Updated `.gitignore` to exclude `.env` files and `node_modules/`
+
 ## [1.2.0] - 2025-01-19
 
 ### Performance

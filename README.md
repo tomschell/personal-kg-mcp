@@ -111,6 +111,28 @@ npm install @tomschell/personal-kg-mcp
 | `PKG_MCP_CAPTURE_TOOLS` | `github` | Tools to capture (comma-separated) |
 | `PKG_MCP_CAPTURE_EXCLUDE` | `""` | Tools to exclude (comma-separated) |
 | `PKG_MCP_CAPTURE_AUTO` | `true` | Auto-capture without explicit calls |
+| `OPENAI_API_KEY` | - | OpenAI API key for semantic embeddings |
+| `PKG_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
+
+### Environment Setup
+
+For a complete list of environment variables, see `.env.example`.
+
+**Setup Options:**
+
+1. **Conductor Workspaces** (recommended for 1Password users):
+   ```bash
+   ./scripts/setup-conductor.sh
+   ```
+   This creates symlinks to your 1Password-managed environment files.
+
+2. **Manual Setup**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your values
+   ```
+
+3. **MCP Config**: Add environment variables directly to your MCP configuration (see above).
 
 ## Quick Start
 
