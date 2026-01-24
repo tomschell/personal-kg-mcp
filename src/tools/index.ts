@@ -5,8 +5,9 @@ import { setupRelationshipTools } from "./relationships.js";
 import { setupMaintenanceTools } from "./maintenance.js";
 import { setupAnalysisTools } from "./analysis.js";
 import { setupProjectTools, setupQuestionTools } from "./project.js";
+import { setupDiagnosticTools } from "./diagnostic.js";
 
-export { setupCoreTools, setupSearchTools, setupContextTools, setupRelationshipTools, setupMaintenanceTools, setupAnalysisTools, setupProjectTools, setupQuestionTools };
+export { setupCoreTools, setupSearchTools, setupContextTools, setupRelationshipTools, setupMaintenanceTools, setupAnalysisTools, setupProjectTools, setupQuestionTools, setupDiagnosticTools };
 
 // Main setup function that registers all tools
 export function setupAllTools(
@@ -28,4 +29,5 @@ export function setupAllTools(
   setupAnalysisTools(server, storage);
   setupProjectTools(server, storage);
   setupQuestionTools(server, storage);
+  setupDiagnosticTools(server, storage);
 }

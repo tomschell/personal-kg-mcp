@@ -33,7 +33,7 @@ describe("personal-kg-mcp", () => {
     );
     const toolNames = registered;
 
-    // Consolidated tool names (16 tools total)
+    // Consolidated tool names (17 tools total)
     const expected = [
       // Core tools
       "kg_capture",
@@ -62,9 +62,12 @@ describe("personal-kg-mcp", () => {
       "kg_capture_session",
       "kg_open_questions",
       "kg_resolve_question",
+
+      // Diagnostic tools
+      "kg_diagnostic",
     ];
 
-    expect(expected.length).toBe(16);
+    expect(expected.length).toBe(17);
     for (const name of expected) expect(toolNames).toContain(name);
     expect(toolNames.length).toBe(expected.length);
   });
